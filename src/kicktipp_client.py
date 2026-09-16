@@ -70,18 +70,28 @@ def _dismiss_cookie_banner(page) -> None:
 
 def _click(page, selector: str) -> bool:
     """Robuster Klick: erst in den sichtbaren Bereich scrollen, dann klicken;
-    falls das (z.B. wegen eines Overlays) haengen bleibt, erzwungen klicken."""
+    falls das (z.B. wegen eines Overlays) haengen bleibt, erzwungen klicken.
+    Letzter Fallback: natives JS-.click() direkt auf dem Element -- das
+    triggert den Click-Handler unabhaengig von Bildschirmkoordinaten und
+    umgeht damit ein Overlay, das einen koordinatenbasierten Klick (auch
+    mit force=True) abfangen wuerde."""
     locator = page.locator(selector).first
     try:
         locator.scroll_into_view_if_needed(timeout=5000)
         locator.click(timeout=10000)
         return True
     except Exception:
-        try:
-            locator.click(timeout=5000, force=True)
-            return True
-        except Exception:
-            return False
+        pass
+    try:
+        locator.click(timeout=5000, force=True)
+        return True
+    except Exception:
+        pass
+    try:
+        locator.evaluate("el => el.click()")
+        return True
+    except Exception:
+        return False
 
 
 class KicktippSession:
