@@ -118,7 +118,11 @@ class KicktippSession:
         self.page.goto(f"https://www.kicktipp.de/{self.group}/tippabgabe")
         _dismiss_cookie_banner(self.page)
         self.page.wait_for_load_state("networkidle")
+        self._load_rows()
+        return self
 
+    def _load_rows(self) -> None:
+        """(Neu-)Aufbau von self._rows aus der aktuellen Tippabgabe-Seite."""
         all_trs = self.page.query_selector_all(
             "table.tippabgabe tr, form#tippabgabeForm tr"
         )
@@ -138,7 +142,15 @@ class KicktippSession:
                         "away_text": away_cell.inner_text().strip(),
                     }
                 )
-        return self
+
+    def reload_rows(self) -> None:
+        """Laedt die Tippabgabe-Seite neu und baut self._rows neu auf --
+        genutzt, um nach dem Absenden zu verifizieren, dass Werte wirklich
+        gespeichert wurden."""
+        self.page.reload()
+        _dismiss_cookie_banner(self.page)
+        self.page.wait_for_load_state("networkidle")
+        self._load_rows()
 
     def __exit__(self, *exc):
         if self._browser:
@@ -174,10 +186,41 @@ class KicktippSession:
         return True
 
     def submit_form(self) -> bool:
-        if not _click(self.page, 'button[type="submit"], input[type="submit"]'):
-            return False
+        # Zuerst gezielt den Submit-Button INNERHALB des Tippformulars
+        # suchen -- ein ungerichteter Seiten-weiter Selector kann sonst
+        # versehentlich einen anderen Button (Header/Werbung) treffen.
+        specific = (
+            'form#tippabgabeForm button[type="submit"], '
+            'form#tippabgabeForm input[type="submit"], '
+            'table.tippabgabe button[type="submit"]'
+        )
+        if not _click(self.page, specific):
+            if not _click(self.page, 'button[type="submit"], input[type="submit"]'):
+                return False
         self.page.wait_for_load_state("networkidle")
         return True
+
+    def verify_saved(self, tips: list[dict]) -> list[str]:
+        """Laedt die Seite neu und prueft, ob die uebergebenen Tipps
+        tatsaechlich gespeichert wurden (nicht nur im Formular ausgefuellt)."""
+        self.reload_rows()
+        problems = []
+        for tip in tips:
+            row = self.find_row(tip["home_team"], tip["away_team"])
+            if row is None:
+                problems.append(
+                    f"Konnte Speichern nicht verifizieren (Zeile verschwunden): "
+                    f"{tip['home_team']} - {tip['away_team']}"
+                )
+                continue
+            saved = self.read_tip(row)
+            expected = (str(tip["home_goals"]), str(tip["away_goals"]))
+            if saved != expected:
+                problems.append(
+                    f"WARNUNG: Tipp wurde NICHT gespeichert (Seite zeigt "
+                    f"{saved} statt {expected}): {tip['home_team']} - {tip['away_team']}"
+                )
+        return problems
 
 
 def submit_tips(group: str, username: str, password: str, tips: list[dict]) -> list[str]:
@@ -185,6 +228,7 @@ def submit_tips(group: str, username: str, password: str, tips: list[dict]) -> l
     Fuer den manuellen UI-Flow, bei dem der Nutzer die Werte explizit bestaetigt hat.
     """
     messages: list[str] = []
+    filled_tips = []
     with KicktippSession(group, username, password) as session:
         for tip in tips:
             row = session.find_row(tip["home_team"], tip["away_team"])
@@ -200,6 +244,7 @@ def submit_tips(group: str, username: str, password: str, tips: list[dict]) -> l
                     f"{tip['home_team']} - {tip['away_team']}"
                 )
                 continue
+            filled_tips.append(tip)
             messages.append(
                 f"Tipp gesetzt: {tip['home_team']} {tip['home_goals']}:"
                 f"{tip['away_goals']} {tip['away_team']}"
@@ -207,6 +252,7 @@ def submit_tips(group: str, username: str, password: str, tips: list[dict]) -> l
 
         if session.submit_form():
             messages.append("Tipps abgeschickt.")
+            messages.extend(session.verify_saved(filled_tips))
         else:
             messages.append("WARNUNG: Absenden-Button nicht gefunden, Tipps evtl. nicht gespeichert.")
 
@@ -217,7 +263,7 @@ def submit_missing_tips(group: str, username: str, password: str, candidate_tips
     """Backup-Modus: setzt nur Tipps fuer Spiele, die auf Kicktipp noch leer sind.
     Bereits (z.B. manuell per UI) gesetzte Tipps werden nicht ueberschrieben."""
     messages: list[str] = []
-    filled_any = False
+    filled_tips = []
     with KicktippSession(group, username, password) as session:
         for tip in candidate_tips:
             row = session.find_row(tip["home_team"], tip["away_team"])
@@ -244,15 +290,16 @@ def submit_missing_tips(group: str, username: str, password: str, candidate_tips
                 continue
 
             if session.fill_tip(row, tip["home_goals"], tip["away_goals"]):
-                filled_any = True
+                filled_tips.append(tip)
                 messages.append(
                     f"Backup-Tipp gesetzt: {tip['home_team']} {tip['home_goals']}:"
                     f"{tip['away_goals']} {tip['away_team']}"
                 )
 
-        if filled_any:
+        if filled_tips:
             if session.submit_form():
                 messages.append("Backup-Tipps abgeschickt.")
+                messages.extend(session.verify_saved(filled_tips))
             else:
                 messages.append("WARNUNG: Absenden-Button nicht gefunden, Tipps evtl. nicht gespeichert.")
         else:
