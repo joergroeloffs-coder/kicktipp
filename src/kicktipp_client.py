@@ -110,11 +110,11 @@ class KicktippSession:
         self.page.fill('input[name="passwort"]', self.password)
         if not _click(self.page, 'button[type="submit"], input[type="submit"]'):
             raise RuntimeError("Login-Button konnte nicht geklickt werden.")
-        self.page.wait_for_load_state("networkidle")
+        self.page.wait_for_load_state("load")
 
         self.page.goto(f"https://www.kicktipp.de/{self.group}/tippabgabe")
         _dismiss_cookie_banner(self.page)
-        self.page.wait_for_load_state("networkidle")
+        self.page.wait_for_load_state("load")
         self._load_rows()
         return self
 
@@ -164,7 +164,7 @@ class KicktippSession:
         gespeichert wurden."""
         self.page.reload()
         _dismiss_cookie_banner(self.page)
-        self.page.wait_for_load_state("networkidle")
+        self.page.wait_for_load_state("load")
         self._load_rows()
 
     def __exit__(self, *exc):
@@ -268,7 +268,7 @@ class KicktippSession:
         except Exception as exc:
             info = f"Kein POST nach dem Klick beobachtet (evtl. AJAX ohne Navigation): {exc}"
 
-        self.page.wait_for_load_state("networkidle")
+        self.page.wait_for_load_state("load")
         return True, info
 
     def screenshot(self, path: str) -> None:
