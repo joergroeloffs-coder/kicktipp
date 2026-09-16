@@ -46,6 +46,7 @@ def _names_match(openliga_name: str, kicktipp_name: str) -> bool:
 
 
 _COOKIE_BUTTON_TEXTS = [
+    "Akzeptieren und weiter",
     "Alle akzeptieren",
     "Akzeptieren",
     "Einverstanden",
@@ -55,17 +56,22 @@ _COOKIE_BUTTON_TEXTS = [
 ]
 
 
-def _dismiss_cookie_banner(page) -> None:
+def _dismiss_cookie_banner(page) -> bool:
     """Best-effort: schliesst Cookie-/Consent-Banner, falls vorhanden.
-    Solche Overlays verschieben sonst das Layout und lassen Formularfelder
-    ausserhalb des sichtbaren Viewports landen."""
-    for text in _COOKIE_BUTTON_TEXTS:
-        try:
-            button = page.get_by_role("button", name=text, exact=False)
-            button.click(timeout=2000)
-            return
-        except Exception:
-            continue
+    Solche Overlays legen sich sonst sichtbar UEBER die Seite und fangen
+    Klicks ab (auch erzwungene), obwohl das Zielelement scheinbar getroffen
+    wird. Consent-Manager laufen ueblicherweise in einem iframe, daher wird
+    ueber alle Frames der Seite gesucht, nicht nur das Hauptdokument.
+    Gibt True zurueck, wenn tatsaechlich etwas geklickt wurde."""
+    for frame in page.frames:
+        for text in _COOKIE_BUTTON_TEXTS:
+            try:
+                button = frame.get_by_role("button", name=text, exact=False)
+                button.click(timeout=1500)
+                return True
+            except Exception:
+                continue
+    return False
 
 
 def _click(page, selector: str) -> bool:
@@ -205,6 +211,11 @@ class KicktippSession:
         """Klickt den Speichern-Button und beobachtet dabei die tatsaechliche
         Netzwerkantwort, um zweifelsfrei zu sehen, ob (und wie) der Server
         auf den Klick reagiert hat."""
+        # Das Consent-/Werbe-Overlay kann zwischen dem initialen Laden und
+        # dem Absenden erneut auftauchen und liegt sichtbar UEBER dem
+        # Speichern-Button -- daher hier nochmal explizit pruefen/wegklicken.
+        _dismiss_cookie_banner(self.page)
+
         # Andere (von uns nicht ausgefuellte) Tipp-Felder im selben Formular
         # koennen ein "required"-Attribut haben. Dann bricht der Browser die
         # native HTML5-Validierung beim Klick STILL ab -- kein Request, kein
