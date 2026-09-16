@@ -116,6 +116,16 @@ class KicktippSession:
                 return row
         return None
 
+    def debug_row_texts(self, limit: int = 60) -> list[str]:
+        """Liefert die Rohtexte aller gefundenen Tabellenzeilen -- nur zur
+        Fehlersuche, wenn find_row unerwartet nichts findet."""
+        texts = []
+        for row in self._rows[:limit]:
+            text = " ".join(row.inner_text().split())
+            if text:
+                texts.append(text)
+        return texts
+
     @staticmethod
     def _tip_inputs(row):
         return row.query_selector_all('input[type="text"], input[type="number"]')
@@ -180,6 +190,7 @@ def submit_missing_tips(group: str, username: str, password: str, candidate_tips
     Bereits (z.B. manuell per UI) gesetzte Tipps werden nicht ueberschrieben."""
     messages: list[str] = []
     filled_any = False
+    debug_dumped = False
     with KicktippSession(group, username, password) as session:
         for tip in candidate_tips:
             row = session.find_row(tip["home_team"], tip["away_team"])
@@ -188,6 +199,10 @@ def submit_missing_tips(group: str, username: str, password: str, candidate_tips
                     f"Spiel nicht auf Tippabgabe-Seite gefunden: "
                     f"{tip['home_team']} - {tip['away_team']}"
                 )
+                if not debug_dumped:
+                    messages.append("DEBUG Zeileninhalte auf der Tippabgabe-Seite:")
+                    messages.extend(f"  DEBUG: {t}" for t in session.debug_row_texts())
+                    debug_dumped = True
                 continue
 
             existing = session.read_tip(row)
