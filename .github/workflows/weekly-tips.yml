@@ -1,10 +1,12 @@
-name: Kicktipp Backup-Tipps
+name: Kicktipp Taeglicher Tipp-Abgleich
 
 on:
   schedule:
-    # Freitags 18:00 UTC (~19-20 Uhr deutsche Zeit), kurz vor dem fruehesten Anpfiff.
-    # Fuellt nur Spiele, die bis dahin nicht manuell (per lokaler UI) getippt wurden.
-    - cron: "0 18 * * 5"
+    # Taeglich um 06:00 UTC (~7-8 Uhr deutsche Zeit): berechnet alle Spiele
+    # neu und korrigiert bereits gesetzte Tipps, falls sich die Prognose
+    # (Form, Tabelle, Quoten) seit dem letzten Lauf geaendert hat. Spiele
+    # nach Anpfiff sind von Kicktipp gesperrt und werden nie angefasst.
+    - cron: "0 6 * * *"
   workflow_dispatch: {}
 
 jobs:
@@ -22,7 +24,7 @@ jobs:
           pip install -r requirements.txt
           playwright install --with-deps chromium
 
-      - name: Fehlende Tipps als Backup setzen
+      - name: Tipps neu berechnen und abgleichen
         env:
           KICKTIPP_GROUP: ${{ secrets.KICKTIPP_GROUP }}
           KICKTIPP_USERNAME: ${{ secrets.KICKTIPP_USERNAME }}

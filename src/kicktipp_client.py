@@ -174,27 +174,6 @@ class KicktippSession:
                 return row["element"]
         return None
 
-    def list_unfilled_matches(self) -> list[dict]:
-        """Liefert alle Spiele, die Kicktipp tatsaechlich auf der Seite
-        anzeigt und die noch KEINEN Tipp haben -- die Ground Truth statt
-        einer selbst erratenen Kandidatenliste."""
-        open_matches = []
-        for row in self._rows:
-            tip = self.read_tip(row["element"])
-            if tip is None:
-                continue
-            home_existing, away_existing = tip
-            if home_existing and away_existing:
-                continue
-            open_matches.append(
-                {
-                    "home_team": row["home_text"],
-                    "away_team": row["away_text"],
-                    "odds": row["odds"],
-                }
-            )
-        return open_matches
-
     @staticmethod
     def _tip_inputs(row):
         return row.query_selector_all('input[type="text"], input[type="number"]')
@@ -224,9 +203,16 @@ class KicktippSession:
             )
         return result
 
+    def is_locked(self, row) -> bool:
+        """True, wenn die Tipp-Felder nicht mehr editierbar sind (Kicktipp
+        sperrt sie bei Anpfiff) -- solche Spiele duerfen nicht mehr
+        korrigiert werden."""
+        inputs = self._tip_inputs(row)
+        return len(inputs) < 2 or any(i.is_disabled() for i in inputs)
+
     def fill_tip(self, row, home_goals: int, away_goals: int) -> bool:
         inputs = self._tip_inputs(row)
-        if len(inputs) < 2:
+        if len(inputs) < 2 or any(i.is_disabled() for i in inputs):
             return False
         inputs[0].fill(str(home_goals))
         inputs[1].fill(str(away_goals))
@@ -373,57 +359,67 @@ def submit_tips(group: str, username: str, password: str, tips: list[dict]) -> l
     return messages
 
 
-def submit_missing_tips(
+def sync_tips(
     group: str,
     username: str,
     password: str,
     predict_fn,
     screenshot_dir: str | None = None,
 ) -> list[str]:
-    """Backup-Modus: liest die auf Kicktipp tatsaechlich offenen (noch nicht
-    getippten) Spiele direkt von der Seite -- statt eine eigene Kandidaten-
-    liste zu erraten und zu versuchen, sie auf Kicktipp wiederzufinden.
-    predict_fn(home_team, away_team, odds) -> (home_goals, away_goals) berechnet
-    den Tipp je Spiel anhand der von Kicktipp gemeldeten Vereinsnamen und
-    Quoten (odds ist ein dict {"home","draw","away"} oder None).
+    """Taeglicher Abgleich: liest ALLE auf Kicktipp angezeigten Spiele
+    direkt von der Seite -- offene wie bereits getippte -- und berechnet
+    fuer jedes neu, was die Heuristik aktuell vorschlaegt.
+    - Noch leere Felder werden gefuellt.
+    - Bereits gesetzte Tipps werden UEBERSCHRIEBEN, wenn die Neuberechnung
+      (neue Formdaten, Tabelle, Quoten) ein anderes Ergebnis liefert.
+    - Spiele, deren Anpfiff vorbei ist (Felder von Kicktipp gesperrt),
+      werden nie angefasst.
+    predict_fn(home_team, away_team, odds) -> (home_goals, away_goals).
     screenshot_dir: wenn gesetzt, werden Screenshots vor/nach dem Absenden
     dorthin gespeichert -- nur zur visuellen Fehlersuche."""
     messages: list[str] = []
-    filled_tips = []
+    changed_tips = []
     with KicktippSession(group, username, password) as session:
-        open_matches = session.list_unfilled_matches()
-        if not open_matches:
-            return ["Nichts zu tun: alle Spiele bereits getippt."]
+        matches = session.list_all_matches()
+        if not matches:
+            return ["Keine Spiele auf der Tippabgabe-Seite gefunden."]
 
-        for match in open_matches:
+        for match in matches:
             home_team, away_team = match["home_team"], match["away_team"]
             row = session.find_row(home_team, away_team)
-            if row is None:
-                messages.append(f"Zeile nicht mehr gefunden: {home_team} - {away_team}")
+            if row is None or session.is_locked(row):
                 continue
 
             home_goals, away_goals = predict_fn(home_team, away_team, match["odds"])
+            existing_home, existing_away = match["existing_home_goals"], match["existing_away_goals"]
             tip = {
                 "home_team": home_team,
                 "away_team": away_team,
                 "home_goals": home_goals,
                 "away_goals": away_goals,
             }
-            if session.fill_tip(row, home_goals, away_goals):
-                filled_tips.append(tip)
-                messages.append(
-                    f"Backup-Tipp gesetzt: {home_team} {home_goals}:{away_goals} {away_team}"
-                )
 
-        if filled_tips:
+            if existing_home is None:
+                if session.fill_tip(row, home_goals, away_goals):
+                    changed_tips.append(tip)
+                    messages.append(f"Tipp gesetzt: {home_team} {home_goals}:{away_goals} {away_team}")
+            elif str(home_goals) != existing_home or str(away_goals) != existing_away:
+                if session.fill_tip(row, home_goals, away_goals):
+                    changed_tips.append(tip)
+                    messages.append(
+                        f"Tipp korrigiert: {home_team} {existing_home}:{existing_away} -> "
+                        f"{home_goals}:{away_goals} {away_team}"
+                    )
+
+        if changed_tips:
             if screenshot_dir:
                 session.screenshot(f"{screenshot_dir}/vor_absenden.png")
             ok, info = session.submit_form()
             if screenshot_dir:
                 session.screenshot(f"{screenshot_dir}/nach_absenden.png")
             if ok:
-                messages.append(f"Backup-Tipps abgeschickt. ({info})")
-                problems = session.verify_saved(filled_tips)
+                messages.append(f"Tipps abgeschickt. ({info})")
+                problems = session.verify_saved(changed_tips)
                 messages.extend(problems)
                 if problems:
                     messages.append("DEBUG Button-/Submit-Elemente auf der Seite:")
@@ -432,12 +428,12 @@ def submit_missing_tips(
                         session.screenshot(f"{screenshot_dir}/nach_verify.png")
                     b64 = session.screenshot_base64()
                     if b64:
-                        messages.append(f"DEBUG-SCREENSHOT-B64-START")
+                        messages.append("DEBUG-SCREENSHOT-B64-START")
                         messages.append(b64)
                         messages.append("DEBUG-SCREENSHOT-B64-END")
             else:
                 messages.append(f"WARNUNG: Absenden-Button nicht gefunden, Tipps evtl. nicht gespeichert. ({info})")
         else:
-            messages.append("Nichts zu tun: alle Spiele bereits getippt.")
+            messages.append("Nichts zu tun: alle Tipps stimmen bereits mit der Neuberechnung ueberein.")
 
     return messages
