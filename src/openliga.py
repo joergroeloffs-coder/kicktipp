@@ -73,17 +73,27 @@ class TableEntry:
 
 def get_table(league: str, season: int | None = None) -> list[TableEntry]:
     """Aktuelle Tabelle einer Liga (Punkte, Tordifferenz) -- als Mass fuer
-    die generelle Staerke eines Teams unabhaengig von dessen letzten Spielen."""
+    die generelle Staerke eines Teams unabhaengig von dessen letzten Spielen.
+    Die Tabelle ist nur eine Zusatz-Info fuer die Tippberechnung; schlaegt
+    die Abfrage fehl, wird eine leere Liste zurueckgegeben statt den
+    ganzen Lauf abzubrechen."""
     season = season if season is not None else _current_season()
     url = f"{API_BASE}/getbltable/{league}/{season}"
-    resp = requests.get(url, timeout=30)
-    resp.raise_for_status()
+    try:
+        resp = requests.get(url, timeout=30)
+        resp.raise_for_status()
+        raw_entries = resp.json()
+    except requests.RequestException:
+        return []
     entries = []
-    for raw in resp.json():
+    for raw in raw_entries:
+        team_name = raw.get("teamName") or (raw.get("teamInfoObject") or {}).get("teamName")
+        if not team_name:
+            continue
         matches = raw.get("matches") or 0
         entries.append(
             TableEntry(
-                team=raw["teamInfoObject"]["teamName"],
+                team=team_name,
                 points=raw.get("points", 0),
                 matches=matches,
                 goal_diff=(raw.get("goals", 0) - raw.get("opponentGoals", 0)),
