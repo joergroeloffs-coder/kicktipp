@@ -116,6 +116,12 @@ class KicktippSession:
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch()
         self.page = self._browser.new_page(viewport={"width": 1366, "height": 2200})
+        # Ein natives confirm()/alert()-Dialog beim Absenden wuerde die
+        # Seite blockieren; ohne Handler dismisst Playwright ihn automatisch
+        # (= Abbruch), was wie ein wirkungsloser Klick aussieht. Immer
+        # akzeptieren, damit ein etwaiger "Trotz unvollstaendiger Tipps
+        # abschicken?"-Dialog die Submission nicht verhindert.
+        self.page.on("dialog", lambda dialog: dialog.accept())
 
         self.page.goto(LOGIN_URL)
         _dismiss_cookie_banner(self.page)
