@@ -200,6 +200,20 @@ class KicktippSession:
         self.page.wait_for_load_state("networkidle")
         return True
 
+    def debug_buttons(self, limit: int = 25) -> list[str]:
+        """Liefert alle Button-/Submit-artigen Elemente auf der Seite --
+        nur zur Fehlersuche, wenn verify_saved ein Speichern-Problem meldet."""
+        elements = self.page.query_selector_all(
+            "button, input[type='submit'], input[type='button'], a.btn"
+        )
+        out = []
+        for el in elements[:limit]:
+            try:
+                out.append(el.evaluate("el => el.outerHTML")[:250])
+            except Exception:
+                continue
+        return out
+
     def verify_saved(self, tips: list[dict]) -> list[str]:
         """Laedt die Seite neu und prueft, ob die uebergebenen Tipps
         tatsaechlich gespeichert wurden (nicht nur im Formular ausgefuellt)."""
@@ -299,7 +313,11 @@ def submit_missing_tips(group: str, username: str, password: str, candidate_tips
         if filled_tips:
             if session.submit_form():
                 messages.append("Backup-Tipps abgeschickt.")
-                messages.extend(session.verify_saved(filled_tips))
+                problems = session.verify_saved(filled_tips)
+                messages.extend(problems)
+                if problems:
+                    messages.append("DEBUG Button-/Submit-Elemente auf der Seite:")
+                    messages.extend(f"  DEBUG-BTN: {b}" for b in session.debug_buttons())
             else:
                 messages.append("WARNUNG: Absenden-Button nicht gefunden, Tipps evtl. nicht gespeichert.")
         else:
