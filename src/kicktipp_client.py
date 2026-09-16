@@ -250,6 +250,19 @@ class KicktippSession:
         except Exception:
             pass
 
+    def screenshot_base64(self, max_chars: int = 180_000) -> str | None:
+        """Liefert einen komprimierten Screenshot (JPEG) als Base64-String,
+        gedacht zum Ausgeben in CI-Logs, wenn ein Artifact-Download nicht
+        moeglich ist. Gibt None zurueck, wenn es fehlschlaegt oder zu gross ist."""
+        import base64
+
+        try:
+            data = self.page.screenshot(type="jpeg", quality=40, full_page=False)
+            encoded = base64.b64encode(data).decode("ascii")
+            return encoded if len(encoded) <= max_chars else None
+        except Exception:
+            return None
+
     def debug_buttons(self, limit: int = 25) -> list[str]:
         """Liefert alle Button-/Submit-artigen Elemente auf der Seite --
         nur zur Fehlersuche, wenn verify_saved ein Speichern-Problem meldet."""
@@ -380,6 +393,11 @@ def submit_missing_tips(
                     messages.extend(f"  DEBUG-BTN: {b}" for b in session.debug_buttons())
                     if screenshot_dir:
                         session.screenshot(f"{screenshot_dir}/nach_verify.png")
+                    b64 = session.screenshot_base64()
+                    if b64:
+                        messages.append(f"DEBUG-SCREENSHOT-B64-START")
+                        messages.append(b64)
+                        messages.append("DEBUG-SCREENSHOT-B64-END")
             else:
                 messages.append(f"WARNUNG: Absenden-Button nicht gefunden, Tipps evtl. nicht gespeichert. ({info})")
         else:
