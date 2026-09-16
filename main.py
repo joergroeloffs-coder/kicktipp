@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import sys
 
-from src.openliga import LEAGUES, get_season_matches
+from src.openliga import LEAGUES, get_season_matches, get_table
 from src.predictor import predict_score
 from src.kicktipp_client import submit_missing_tips
 
@@ -26,9 +26,10 @@ def main() -> int:
         return 1
 
     all_matches = [m for league in LEAGUES for m in get_season_matches(league)]
+    table = [entry for league in LEAGUES for entry in get_table(league)]
 
-    def predict_fn(home_team: str, away_team: str) -> tuple[int, int]:
-        return predict_score(all_matches, home_team, away_team)
+    def predict_fn(home_team: str, away_team: str, odds: dict | None) -> tuple[int, int]:
+        return predict_score(all_matches, home_team, away_team, table=table, odds=odds)
 
     screenshot_dir = os.environ.get("KICKTIPP_SCREENSHOT_DIR")
     if screenshot_dir:

@@ -63,13 +63,30 @@ def get_season_matches(league: str, season: int | None = None) -> list[Match]:
     return [_parse_match(m, league) for m in resp.json()]
 
 
-def get_upcoming_friday_matches(leagues: list[str], within_days: int = 3) -> list[Match]:
-    """Kommende, noch nicht gespielte Partien der naechsten `within_days` Tage."""
-    now = dt.datetime.now(dt.timezone.utc)
-    horizon = now + dt.timedelta(days=within_days)
-    upcoming: list[Match] = []
-    for league in leagues:
-        for m in get_season_matches(league):
-            if not m.finished and m.kickoff and now <= m.kickoff <= horizon:
-                upcoming.append(m)
-    return sorted(upcoming, key=lambda m: m.kickoff)
+@dataclass
+class TableEntry:
+    team: str
+    points: int
+    matches: int
+    goal_diff: int
+
+
+def get_table(league: str, season: int | None = None) -> list[TableEntry]:
+    """Aktuelle Tabelle einer Liga (Punkte, Tordifferenz) -- als Mass fuer
+    die generelle Staerke eines Teams unabhaengig von dessen letzten Spielen."""
+    season = season if season is not None else _current_season()
+    url = f"{API_BASE}/getbltable/{league}/{season}"
+    resp = requests.get(url, timeout=30)
+    resp.raise_for_status()
+    entries = []
+    for raw in resp.json():
+        matches = raw.get("matches") or 0
+        entries.append(
+            TableEntry(
+                team=raw["teamInfoObject"]["teamName"],
+                points=raw.get("points", 0),
+                matches=matches,
+                goal_diff=(raw.get("goals", 0) - raw.get("opponentGoals", 0)),
+            )
+        )
+    return entries
