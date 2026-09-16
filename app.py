@@ -1,21 +1,32 @@
 """Lokale Oberflaeche: Spiele + Form + vorgeschlagene Tipps anzeigen,
-manuell anpassen und per Knopfdruck an Kicktipp senden."""
+manuell anpassen und per Knopfdruck an Kicktipp senden.
+
+Die Spieleliste kommt direkt von Kicktipps eigener Tippabgabe-Seite (nicht
+aus einer selbst erratenen OpenLigaDB-Kandidatenliste), damit die UI immer
+exakt zeigt, was diese Kicktipp-Gruppe tatsaechlich tippt."""
 from __future__ import annotations
 
+import datetime as dt
 import os
 
 from flask import Flask, jsonify, request
 from dotenv import load_dotenv
 
-from src.openliga import LEAGUES, get_season_matches, get_upcoming_friday_matches
+from src.openliga import LEAGUES, get_season_matches
 from src.predictor import team_form, predict_score
-from src.kicktipp_client import submit_tips
+from src.kicktipp_client import KicktippSession, submit_tips
 
 load_dotenv()
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
-WITHIN_DAYS = int(os.environ.get("MATCH_WINDOW_DAYS", "4"))
+
+def _kicktipp_credentials():
+    return (
+        os.environ.get("KICKTIPP_GROUP"),
+        os.environ.get("KICKTIPP_USERNAME"),
+        os.environ.get("KICKTIPP_PASSWORD"),
+    )
 
 
 @app.get("/")
@@ -25,23 +36,29 @@ def index():
 
 @app.get("/api/matches")
 def api_matches():
-    leagues = list(LEAGUES.keys())
-    upcoming = get_upcoming_friday_matches(leagues, within_days=WITHIN_DAYS)
-    all_matches_by_league = {league: get_season_matches(league) for league in leagues}
+    group, username, password = _kicktipp_credentials()
+    if not group or not username or not password:
+        return jsonify({"error": "KICKTIPP_GROUP/USERNAME/PASSWORD nicht gesetzt (.env pruefen)."}), 400
 
+    all_matches = [m for league in LEAGUES for m in get_season_matches(league)]
+
+    with KicktippSession(group, username, password) as session:
+        kicktipp_matches = session.list_all_matches()
+
+    now = dt.datetime.now(dt.timezone.utc)
     result = []
-    for match in upcoming:
-        all_matches = all_matches_by_league[match.league]
-        home_goals, away_goals = predict_score(all_matches, match)
-        home_form = team_form(all_matches, match.home_team, match.kickoff)
-        away_form = team_form(all_matches, match.away_team, match.kickoff)
+    for m in kicktipp_matches:
+        home_form = team_form(all_matches, m["home_team"], now)
+        away_form = team_form(all_matches, m["away_team"], now)
+        if m["existing_home_goals"] is not None:
+            home_goals, away_goals = int(m["existing_home_goals"]), int(m["existing_away_goals"])
+        else:
+            home_goals, away_goals = predict_score(all_matches, m["home_team"], m["away_team"])
         result.append(
             {
-                "match_id": match.match_id,
-                "league": LEAGUES[match.league],
-                "kickoff": match.kickoff.isoformat() if match.kickoff else None,
-                "home_team": match.home_team,
-                "away_team": match.away_team,
+                "home_team": m["home_team"],
+                "away_team": m["away_team"],
+                "already_tipped": m["existing_home_goals"] is not None,
                 "predicted_home_goals": home_goals,
                 "predicted_away_goals": away_goals,
                 "home_form": {
@@ -59,9 +76,7 @@ def api_matches():
 
 @app.post("/api/submit")
 def api_submit():
-    group = os.environ.get("KICKTIPP_GROUP")
-    username = os.environ.get("KICKTIPP_USERNAME")
-    password = os.environ.get("KICKTIPP_PASSWORD")
+    group, username, password = _kicktipp_credentials()
     if not group or not username or not password:
         return jsonify({"error": "KICKTIPP_GROUP/USERNAME/PASSWORD nicht gesetzt (.env pruefen)."}), 400
 

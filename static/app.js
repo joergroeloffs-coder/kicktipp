@@ -5,47 +5,46 @@ const reloadBtn = document.querySelector("#reload");
 
 let currentMatches = [];
 
-function fmtKickoff(iso) {
-  if (!iso) return "?";
-  const d = new Date(iso);
-  return d.toLocaleString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-}
-
 async function loadMatches() {
   statusEl.style.display = "none";
-  tbody.innerHTML = "<tr><td colspan='7'>Lade...</td></tr>";
+  tbody.innerHTML = "<tr><td colspan='5'>Lade...</td></tr>";
   const resp = await fetch("/api/matches");
-  currentMatches = await resp.json();
+  const data = await resp.json();
+
+  if (data.error) {
+    tbody.innerHTML = `<tr><td colspan='5'>Fehler: ${data.error}</td></tr>`;
+    return;
+  }
+  currentMatches = data;
 
   if (!currentMatches.length) {
-    tbody.innerHTML = "<tr><td colspan='7'>Keine anstehenden Spiele im Zeitfenster gefunden.</td></tr>";
+    tbody.innerHTML = "<tr><td colspan='5'>Keine Spiele auf der Kicktipp-Tippabgabe-Seite gefunden.</td></tr>";
     return;
   }
 
   tbody.innerHTML = "";
-  for (const m of currentMatches) {
+  currentMatches.forEach((m, idx) => {
     const tr = document.createElement("tr");
+    if (m.already_tipped) tr.classList.add("already-tipped");
     tr.innerHTML = `
-      <td><span class="league-tag">${m.league}</span></td>
-      <td>${fmtKickoff(m.kickoff)}</td>
-      <td>${m.home_team}</td>
+      <td>${m.home_team}${m.already_tipped ? ' <span class="tag">bereits getippt</span>' : ""}</td>
       <td class="form-hint">${m.home_form.goals_scored_avg} / ${m.home_form.goals_conceded_avg}</td>
       <td>
-        <input type="number" min="0" data-match="${m.match_id}" data-side="home" value="${m.predicted_home_goals}">
+        <input type="number" min="0" data-idx="${idx}" data-side="home" value="${m.predicted_home_goals}">
         :
-        <input type="number" min="0" data-match="${m.match_id}" data-side="away" value="${m.predicted_away_goals}">
+        <input type="number" min="0" data-idx="${idx}" data-side="away" value="${m.predicted_away_goals}">
       </td>
       <td class="form-hint">${m.away_form.goals_scored_avg} / ${m.away_form.goals_conceded_avg}</td>
       <td>${m.away_team}</td>
     `;
     tbody.appendChild(tr);
-  }
+  });
 }
 
 function collectTips() {
-  return currentMatches.map((m) => {
-    const homeInput = document.querySelector(`input[data-match="${m.match_id}"][data-side="home"]`);
-    const awayInput = document.querySelector(`input[data-match="${m.match_id}"][data-side="away"]`);
+  return currentMatches.map((m, idx) => {
+    const homeInput = document.querySelector(`input[data-idx="${idx}"][data-side="home"]`);
+    const awayInput = document.querySelector(`input[data-idx="${idx}"][data-side="away"]`);
     return {
       home_team: m.home_team,
       away_team: m.away_team,

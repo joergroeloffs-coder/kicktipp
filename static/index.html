@@ -15,19 +15,20 @@
   button { padding: 0.6rem 1.2rem; font-size: 1rem; border: none; border-radius: 6px; background: #2563eb; color: white; cursor: pointer; }
   button:disabled { background: #999; cursor: not-allowed; }
   #status { margin-top: 1rem; white-space: pre-wrap; font-size: 0.85rem; background: #111; color: #ddd; padding: 0.8rem; border-radius: 6px; display: none; }
-  .league-tag { font-size: 0.7rem; background: #eee; border-radius: 4px; padding: 0.1rem 0.4rem; }
+  .tag { font-size: 0.7rem; background: #eee; border-radius: 4px; padding: 0.1rem 0.4rem; color: #555; }
+  tr.already-tipped { background: #f6fff6; }
 </style>
 </head>
 <body>
   <h1>Kicktipp Tippagent</h1>
-  <p>Anstehende Spiele mit Formanalyse (letzte 5 Spiele) und Tippvorschlag. Werte koennen vor dem Senden angepasst werden.</p>
+  <p>Spiele direkt von Kicktipps Tippabgabe-Seite mit Formanalyse (letzte 5 Spiele) und Tippvorschlag. Werte koennen vor dem Senden angepasst werden.</p>
   <div class="actions">
     <button id="reload">Spiele neu laden</button>
     <button id="submit">Tipps an Kicktipp senden</button>
   </div>
   <table id="matches">
     <thead>
-      <tr><th>Liga</th><th>Anpfiff</th><th>Heim</th><th>Form Heim (Ø Tore geschossen/kassiert)</th><th>Tipp</th><th>Form Gast</th><th>Gast</th></tr>
+      <tr><th>Heim</th><th>Form Heim (Ø Tore geschossen/kassiert)</th><th>Tipp</th><th>Form Gast</th><th>Gast</th></tr>
     </thead>
     <tbody></tbody>
   </table>

@@ -6,43 +6,11 @@ pruefen, ob sich die Feld-/Zeilenstruktur auf kicktipp.de geaendert hat.
 """
 from __future__ import annotations
 
-import re
-import unicodedata
-
 from playwright.sync_api import sync_playwright
 
+from src.teamnames import names_match as _names_match
+
 LOGIN_URL = "https://www.kicktipp.de/info/profil/login"
-
-# OpenLigaDB nutzt volle Vereinsnamen ("SV Werder Bremen", "Borussia
-# Moenchengladbach"), Kicktipp zeigt oft kuerzere/abgekuerzte Varianten
-# ("Werder Bremen", "Bor. Moenchengladbach"). Diese generischen Vereins-
-# praefixe/-suffixe werden beim Vergleich ignoriert, damit der Abgleich
-# ueber den eigentlichen (unterscheidenden) Vereinsnamen funktioniert.
-_CLUB_STOPWORDS = {
-    "fc", "sv", "sc", "sg", "vfl", "vfb", "tsv", "tsg", "fsv", "bsc",
-    "spvgg", "borussia", "bor", "dynamo", "fk", "fka", "vfr", "ssv",
-}
-
-
-def _fold(text: str) -> str:
-    """Entfernt Umlaute/Akzente (ae/oe/ue-Umschrift waere zu riskant,
-    daher einfach diakritische Zeichen entfernen -- solange das auf beiden
-    Vergleichsseiten passiert, bleibt es konsistent)."""
-    decomposed = unicodedata.normalize("NFKD", text)
-    return "".join(c for c in decomposed if not unicodedata.combining(c))
-
-
-def _tokens(name: str) -> set[str]:
-    folded = _fold(name.lower())
-    raw = re.split(r"[^a-z0-9]+", folded)
-    return {t for t in raw if t and t not in _CLUB_STOPWORDS and len(t) >= 3}
-
-
-def _names_match(openliga_name: str, kicktipp_name: str) -> bool:
-    a, b = _tokens(openliga_name), _tokens(kicktipp_name)
-    if not a or not b:
-        return False
-    return bool(a & b)
 
 
 _COOKIE_BUTTON_TEXTS = [
@@ -188,6 +156,23 @@ class KicktippSession:
                 return row["element"]
         return None
 
+    def list_unfilled_matches(self) -> list[dict]:
+        """Liefert alle Spiele, die Kicktipp tatsaechlich auf der Seite
+        anzeigt und die noch KEINEN Tipp haben -- die Ground Truth statt
+        einer selbst erratenen Kandidatenliste."""
+        open_matches = []
+        for row in self._rows:
+            tip = self.read_tip(row["element"])
+            if tip is None:
+                continue
+            home_existing, away_existing = tip
+            if home_existing and away_existing:
+                continue
+            open_matches.append(
+                {"home_team": row["home_text"], "away_team": row["away_text"]}
+            )
+        return open_matches
+
     @staticmethod
     def _tip_inputs(row):
         return row.query_selector_all('input[type="text"], input[type="number"]')
@@ -198,6 +183,23 @@ class KicktippSession:
         if len(inputs) < 2:
             return None
         return inputs[0].input_value().strip(), inputs[1].input_value().strip()
+
+    def list_all_matches(self) -> list[dict]:
+        """Liefert alle von Kicktipp angezeigten Spiele mit ihrem aktuellen
+        Tipp (falls schon gesetzt) -- fuer die Uebersicht in der manuellen UI."""
+        result = []
+        for row in self._rows:
+            existing = self.read_tip(row["element"])
+            home_existing, away_existing = existing if existing else ("", "")
+            result.append(
+                {
+                    "home_team": row["home_text"],
+                    "away_team": row["away_text"],
+                    "existing_home_goals": home_existing or None,
+                    "existing_away_goals": away_existing or None,
+                }
+            )
+        return result
 
     def fill_tip(self, row, home_goals: int, away_goals: int) -> bool:
         inputs = self._tip_inputs(row)
@@ -349,44 +351,44 @@ def submit_tips(group: str, username: str, password: str, tips: list[dict]) -> l
 
 
 def submit_missing_tips(
-    group: str, username: str, password: str, candidate_tips: list[dict], screenshot_dir: str | None = None
+    group: str,
+    username: str,
+    password: str,
+    predict_fn,
+    screenshot_dir: str | None = None,
 ) -> list[str]:
-    """Backup-Modus: setzt nur Tipps fuer Spiele, die auf Kicktipp noch leer sind.
-    Bereits (z.B. manuell per UI) gesetzte Tipps werden nicht ueberschrieben.
+    """Backup-Modus: liest die auf Kicktipp tatsaechlich offenen (noch nicht
+    getippten) Spiele direkt von der Seite -- statt eine eigene Kandidaten-
+    liste zu erraten und zu versuchen, sie auf Kicktipp wiederzufinden.
+    predict_fn(home_team, away_team) -> (home_goals, away_goals) berechnet
+    den Tipp je Spiel anhand der von Kicktipp gemeldeten Vereinsnamen.
     screenshot_dir: wenn gesetzt, werden Screenshots vor/nach dem Absenden
     dorthin gespeichert -- nur zur visuellen Fehlersuche."""
     messages: list[str] = []
     filled_tips = []
     with KicktippSession(group, username, password) as session:
-        for tip in candidate_tips:
-            row = session.find_row(tip["home_team"], tip["away_team"])
+        open_matches = session.list_unfilled_matches()
+        if not open_matches:
+            return ["Nichts zu tun: alle Spiele bereits getippt."]
+
+        for match in open_matches:
+            home_team, away_team = match["home_team"], match["away_team"]
+            row = session.find_row(home_team, away_team)
             if row is None:
-                messages.append(
-                    f"Wird von dieser Kicktipp-Gruppe nicht getippt, ueberspringe: "
-                    f"{tip['home_team']} - {tip['away_team']}"
-                )
+                messages.append(f"Zeile nicht mehr gefunden: {home_team} - {away_team}")
                 continue
 
-            existing = session.read_tip(row)
-            if existing is None:
-                messages.append(
-                    f"Keine Tipp-Eingabefelder gefunden fuer: "
-                    f"{tip['home_team']} - {tip['away_team']}"
-                )
-                continue
-
-            home_existing, away_existing = existing
-            if home_existing and away_existing:
-                messages.append(
-                    f"Bereits getippt, ueberspringe: {tip['home_team']} - {tip['away_team']}"
-                )
-                continue
-
-            if session.fill_tip(row, tip["home_goals"], tip["away_goals"]):
+            home_goals, away_goals = predict_fn(home_team, away_team)
+            tip = {
+                "home_team": home_team,
+                "away_team": away_team,
+                "home_goals": home_goals,
+                "away_goals": away_goals,
+            }
+            if session.fill_tip(row, home_goals, away_goals):
                 filled_tips.append(tip)
                 messages.append(
-                    f"Backup-Tipp gesetzt: {tip['home_team']} {tip['home_goals']}:"
-                    f"{tip['away_goals']} {tip['away_team']}"
+                    f"Backup-Tipp gesetzt: {home_team} {home_goals}:{away_goals} {away_team}"
                 )
 
         if filled_tips:
