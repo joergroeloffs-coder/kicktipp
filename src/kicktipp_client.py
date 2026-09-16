@@ -154,11 +154,6 @@ class KicktippSession:
                 return row["element"]
         return None
 
-    def debug_row_texts(self) -> list[str]:
-        """Liefert Heim/Gast-Zellentexte aller erkannten Tipp-Zeilen -- nur
-        zur Fehlersuche, wenn find_row unerwartet nichts findet."""
-        return [f"{r['home_text']} - {r['away_text']}" for r in self._rows]
-
     @staticmethod
     def _tip_inputs(row):
         return row.query_selector_all('input[type="text"], input[type="number"]')
@@ -195,7 +190,7 @@ def submit_tips(group: str, username: str, password: str, tips: list[dict]) -> l
             row = session.find_row(tip["home_team"], tip["away_team"])
             if row is None:
                 messages.append(
-                    f"Spiel nicht auf Tippabgabe-Seite gefunden: "
+                    f"Wird von dieser Kicktipp-Gruppe nicht getippt, ueberspringe: "
                     f"{tip['home_team']} - {tip['away_team']}"
                 )
                 continue
@@ -223,19 +218,14 @@ def submit_missing_tips(group: str, username: str, password: str, candidate_tips
     Bereits (z.B. manuell per UI) gesetzte Tipps werden nicht ueberschrieben."""
     messages: list[str] = []
     filled_any = False
-    debug_dumped = False
     with KicktippSession(group, username, password) as session:
         for tip in candidate_tips:
             row = session.find_row(tip["home_team"], tip["away_team"])
             if row is None:
                 messages.append(
-                    f"Spiel nicht auf Tippabgabe-Seite gefunden: "
+                    f"Wird von dieser Kicktipp-Gruppe nicht getippt, ueberspringe: "
                     f"{tip['home_team']} - {tip['away_team']}"
                 )
-                if not debug_dumped:
-                    messages.append("DEBUG Spiele auf der Tippabgabe-Seite:")
-                    messages.extend(f"  DEBUG: {t}" for t in session.debug_row_texts())
-                    debug_dumped = True
                 continue
 
             existing = session.read_tip(row)
