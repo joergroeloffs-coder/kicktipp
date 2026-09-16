@@ -1,0 +1,29 @@
+name: Woechentliche Kicktipp-Tipps
+
+on:
+  schedule:
+    # Freitags 13:00 UTC (~14-15 Uhr deutsche Zeit), deutlich vor Anpfiff.
+    - cron: "0 13 * * 5"
+  workflow_dispatch: {}
+
+jobs:
+  set-tips:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Abhaengigkeiten installieren
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Tipps berechnen und setzen
+        env:
+          KICKTIPP_GROUP: ${{ secrets.KICKTIPP_GROUP }}
+          KICKTIPP_USERNAME: ${{ secrets.KICKTIPP_USERNAME }}
+          KICKTIPP_PASSWORD: ${{ secrets.KICKTIPP_PASSWORD }}
+        run: python main.py
