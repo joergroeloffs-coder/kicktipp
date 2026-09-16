@@ -30,6 +30,8 @@ jobs:
           KICKTIPP_USERNAME: ${{ secrets.KICKTIPP_USERNAME }}
           KICKTIPP_PASSWORD: ${{ secrets.KICKTIPP_PASSWORD }}
           KICKTIPP_SCREENSHOT_DIR: screenshots
+          PYTHONUNBUFFERED: "1"
+        timeout-minutes: 8
         run: python main.py
 
       - name: Screenshots als Artifact hochladen
