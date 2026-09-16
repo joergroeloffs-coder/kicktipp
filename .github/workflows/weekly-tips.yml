@@ -27,4 +27,13 @@ jobs:
           KICKTIPP_GROUP: ${{ secrets.KICKTIPP_GROUP }}
           KICKTIPP_USERNAME: ${{ secrets.KICKTIPP_USERNAME }}
           KICKTIPP_PASSWORD: ${{ secrets.KICKTIPP_PASSWORD }}
+          KICKTIPP_SCREENSHOT_DIR: screenshots
         run: python main.py
+
+      - name: Screenshots als Artifact hochladen
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kicktipp-screenshots
+          path: screenshots/
+          if-no-files-found: ignore
