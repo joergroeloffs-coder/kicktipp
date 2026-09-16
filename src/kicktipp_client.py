@@ -199,6 +199,18 @@ class KicktippSession:
         """Klickt den Speichern-Button und beobachtet dabei die tatsaechliche
         Netzwerkantwort, um zweifelsfrei zu sehen, ob (und wie) der Server
         auf den Klick reagiert hat."""
+        # Andere (von uns nicht ausgefuellte) Tipp-Felder im selben Formular
+        # koennen ein "required"-Attribut haben. Dann bricht der Browser die
+        # native HTML5-Validierung beim Klick STILL ab -- kein Request, kein
+        # Fehler in Playwright. Entfernen, bevor abgeschickt wird.
+        try:
+            self.page.evaluate(
+                "document.querySelectorAll('input[required]')"
+                ".forEach(el => el.removeAttribute('required'))"
+            )
+        except Exception:
+            pass
+
         specific = (
             'form#tippabgabeForm button[type="submit"], '
             'form#tippabgabeForm input[type="submit"], '
