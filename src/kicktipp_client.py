@@ -30,12 +30,19 @@ def _dismiss_cookie_banner(page) -> bool:
     Klicks ab (auch erzwungene), obwohl das Zielelement scheinbar getroffen
     wird. Consent-Manager laufen ueblicherweise in einem iframe, daher wird
     ueber alle Frames der Seite gesucht, nicht nur das Hauptdokument.
-    Gibt True zurueck, wenn tatsaechlich etwas geklickt wurde."""
+    Die Seite hat typischerweise viele Werbe-/Tracking-Iframes ohne
+    passenden Button -- .count() prueft schnell (ohne Warten), ob ein Text
+    ueberhaupt vorkommt, bevor der eigentliche (wartende) Klick versucht
+    wird; das verhindert, dass jeder Frame x jeder Text-Kandidat mit
+    vollem Timeout durchlaufen wird. Gibt True zurueck, wenn tatsaechlich
+    etwas geklickt wurde."""
     for frame in page.frames:
         for text in _COOKIE_BUTTON_TEXTS:
             try:
                 button = frame.get_by_role("button", name=text, exact=False)
-                button.click(timeout=1500)
+                if button.count() == 0:
+                    continue
+                button.first.click(timeout=1000)
                 return True
             except Exception:
                 continue
