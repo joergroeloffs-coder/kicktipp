@@ -242,6 +242,14 @@ class KicktippSession:
         self.page.wait_for_load_state("networkidle")
         return True, info
 
+    def screenshot(self, path: str) -> None:
+        """Speichert einen Screenshot der aktuellen Seite -- nur zur
+        visuellen Fehlersuche, wenn Logs allein nicht mehr aufschlussreich sind."""
+        try:
+            self.page.screenshot(path=path, full_page=True)
+        except Exception:
+            pass
+
     def debug_buttons(self, limit: int = 25) -> list[str]:
         """Liefert alle Button-/Submit-artigen Elemente auf der Seite --
         nur zur Fehlersuche, wenn verify_saved ein Speichern-Problem meldet."""
@@ -316,9 +324,13 @@ def submit_tips(group: str, username: str, password: str, tips: list[dict]) -> l
     return messages
 
 
-def submit_missing_tips(group: str, username: str, password: str, candidate_tips: list[dict]) -> list[str]:
+def submit_missing_tips(
+    group: str, username: str, password: str, candidate_tips: list[dict], screenshot_dir: str | None = None
+) -> list[str]:
     """Backup-Modus: setzt nur Tipps fuer Spiele, die auf Kicktipp noch leer sind.
-    Bereits (z.B. manuell per UI) gesetzte Tipps werden nicht ueberschrieben."""
+    Bereits (z.B. manuell per UI) gesetzte Tipps werden nicht ueberschrieben.
+    screenshot_dir: wenn gesetzt, werden Screenshots vor/nach dem Absenden
+    dorthin gespeichert -- nur zur visuellen Fehlersuche."""
     messages: list[str] = []
     filled_tips = []
     with KicktippSession(group, username, password) as session:
@@ -354,7 +366,11 @@ def submit_missing_tips(group: str, username: str, password: str, candidate_tips
                 )
 
         if filled_tips:
+            if screenshot_dir:
+                session.screenshot(f"{screenshot_dir}/vor_absenden.png")
             ok, info = session.submit_form()
+            if screenshot_dir:
+                session.screenshot(f"{screenshot_dir}/nach_absenden.png")
             if ok:
                 messages.append(f"Backup-Tipps abgeschickt. ({info})")
                 problems = session.verify_saved(filled_tips)
@@ -362,6 +378,8 @@ def submit_missing_tips(group: str, username: str, password: str, candidate_tips
                 if problems:
                     messages.append("DEBUG Button-/Submit-Elemente auf der Seite:")
                     messages.extend(f"  DEBUG-BTN: {b}" for b in session.debug_buttons())
+                    if screenshot_dir:
+                        session.screenshot(f"{screenshot_dir}/nach_verify.png")
             else:
                 messages.append(f"WARNUNG: Absenden-Button nicht gefunden, Tipps evtl. nicht gespeichert. ({info})")
         else:

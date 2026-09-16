@@ -48,7 +48,11 @@ def main() -> int:
         )
         print(f"Tipp berechnet: {match.home_team} {home_goals}:{away_goals} {match.away_team}")
 
-    messages = submit_missing_tips(group, username, password, tips)
+    screenshot_dir = os.environ.get("KICKTIPP_SCREENSHOT_DIR")
+    if screenshot_dir:
+        os.makedirs(screenshot_dir, exist_ok=True)
+
+    messages = submit_missing_tips(group, username, password, tips, screenshot_dir=screenshot_dir)
     for msg in messages:
         print(msg)
 
