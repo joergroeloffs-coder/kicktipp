@@ -7,23 +7,42 @@ pruefen, ob sich die Feld-/Zeilenstruktur auf kicktipp.de geaendert hat.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from playwright.sync_api import sync_playwright
 
 LOGIN_URL = "https://www.kicktipp.de/info/profil/login"
 
+# OpenLigaDB nutzt volle Vereinsnamen ("SV Werder Bremen", "Borussia
+# Moenchengladbach"), Kicktipp zeigt oft kuerzere/abgekuerzte Varianten
+# ("Werder Bremen", "Bor. Moenchengladbach"). Diese generischen Vereins-
+# praefixe/-suffixe werden beim Vergleich ignoriert, damit der Abgleich
+# ueber den eigentlichen (unterscheidenden) Vereinsnamen funktioniert.
+_CLUB_STOPWORDS = {
+    "fc", "sv", "sc", "sg", "vfl", "vfb", "tsv", "tsg", "fsv", "bsc",
+    "spvgg", "borussia", "bor", "dynamo", "fk", "fka", "vfr", "ssv",
+}
 
-def _normalize(name: str) -> str:
-    name = name.lower()
-    name = re.sub(r"[^a-z0-9]", "", name)
-    return name
+
+def _fold(text: str) -> str:
+    """Entfernt Umlaute/Akzente (ae/oe/ue-Umschrift waere zu riskant,
+    daher einfach diakritische Zeichen entfernen -- solange das auf beiden
+    Vergleichsseiten passiert, bleibt es konsistent)."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
+def _tokens(name: str) -> set[str]:
+    folded = _fold(name.lower())
+    raw = re.split(r"[^a-z0-9]+", folded)
+    return {t for t in raw if t and t not in _CLUB_STOPWORDS and len(t) >= 3}
 
 
 def _names_match(openliga_name: str, kicktipp_name: str) -> bool:
-    a, b = _normalize(openliga_name), _normalize(kicktipp_name)
+    a, b = _tokens(openliga_name), _tokens(kicktipp_name)
     if not a or not b:
         return False
-    return a in b or b in a
+    return bool(a & b)
 
 
 _COOKIE_BUTTON_TEXTS = [
@@ -68,7 +87,11 @@ def _click(page, selector: str) -> bool:
 class KicktippSession:
     """Haelt eine eingeloggte Browser-Session auf der Tippabgabe-Seite offen,
     damit Lesen (bereits vorhandene Tipps) und Schreiben in einem Lauf
-    passieren koennen."""
+    passieren koennen.
+
+    Kicktipps Tippabgabe-Tabelle hat je Spielzeile die Spalten
+    td.col0 (Anpfiff), td.col1 (Heimteam), td.col2 (Gastteam),
+    td.col3 (die beiden Tipp-Eingabefelder)."""
 
     def __init__(self, group: str, username: str, password: str):
         self.group = group
@@ -77,7 +100,7 @@ class KicktippSession:
         self._pw = None
         self._browser = None
         self.page = None
-        self._rows = []
+        self._rows: list[dict] = []
 
     def __enter__(self) -> "KicktippSession":
         self._pw = sync_playwright().start()
@@ -96,11 +119,25 @@ class KicktippSession:
         _dismiss_cookie_banner(self.page)
         self.page.wait_for_load_state("networkidle")
 
-        self._rows = self.page.query_selector_all(
+        all_trs = self.page.query_selector_all(
             "table.tippabgabe tr, form#tippabgabeForm tr"
         )
-        if not self._rows:
-            self._rows = self.page.query_selector_all("tr")
+        if not all_trs:
+            all_trs = self.page.query_selector_all("tr")
+
+        self._rows = []
+        for tr in all_trs:
+            home_cell = tr.query_selector("td.col1")
+            away_cell = tr.query_selector("td.col2")
+            inputs = self._tip_inputs(tr)
+            if home_cell and away_cell and len(inputs) >= 2:
+                self._rows.append(
+                    {
+                        "element": tr,
+                        "home_text": home_cell.inner_text().strip(),
+                        "away_text": away_cell.inner_text().strip(),
+                    }
+                )
         return self
 
     def __exit__(self, *exc):
@@ -111,38 +148,23 @@ class KicktippSession:
 
     def find_row(self, home_team: str, away_team: str):
         for row in self._rows:
-            text = row.inner_text()
-            if _names_match(home_team, text) and _names_match(away_team, text):
-                return row
+            if _names_match(home_team, row["home_text"]) and _names_match(
+                away_team, row["away_text"]
+            ):
+                return row["element"]
         return None
 
-    def debug_row_texts(self, limit: int = 60) -> list[str]:
-        """Liefert die Rohtexte aller gefundenen Tabellenzeilen -- nur zur
-        Fehlersuche, wenn find_row unerwartet nichts findet."""
-        texts = []
-        for row in self._rows[:limit]:
-            text = " ".join(row.inner_text().split())
-            if text:
-                texts.append(text)
-        return texts
-
-    def debug_row_html(self, limit: int = 3) -> list[str]:
-        """Liefert das rohe HTML der ersten Zeilen mit Tipp-Eingabefeldern --
-        nur zur Fehlersuche der genauen Tabellenstruktur."""
-        html_rows = []
-        for row in self._rows:
-            if len(self._tip_inputs(row)) >= 2:
-                html_rows.append(row.inner_html()[:2000])
-            if len(html_rows) >= limit:
-                break
-        return html_rows
+    def debug_row_texts(self) -> list[str]:
+        """Liefert Heim/Gast-Zellentexte aller erkannten Tipp-Zeilen -- nur
+        zur Fehlersuche, wenn find_row unerwartet nichts findet."""
+        return [f"{r['home_text']} - {r['away_text']}" for r in self._rows]
 
     @staticmethod
     def _tip_inputs(row):
         return row.query_selector_all('input[type="text"], input[type="number"]')
 
     def read_tip(self, row) -> tuple[str, str] | None:
-        """Liest vorhandene Werte; (None, None)-artig wird als leer interpretiert."""
+        """Liest vorhandene Werte; leere Strings bedeuten unausgefuellt."""
         inputs = self._tip_inputs(row)
         if len(inputs) < 2:
             return None
@@ -211,11 +233,8 @@ def submit_missing_tips(group: str, username: str, password: str, candidate_tips
                     f"{tip['home_team']} - {tip['away_team']}"
                 )
                 if not debug_dumped:
-                    messages.append("DEBUG Zeileninhalte auf der Tippabgabe-Seite:")
+                    messages.append("DEBUG Spiele auf der Tippabgabe-Seite:")
                     messages.extend(f"  DEBUG: {t}" for t in session.debug_row_texts())
-                    messages.append("DEBUG HTML der ersten Tipp-Zeilen:")
-                    for html in session.debug_row_html():
-                        messages.append(f"  DEBUG-HTML: {html}")
                     debug_dumped = True
                 continue
 
