@@ -1,4 +1,4 @@
-"""Login bei Kicktipp und automatisches Setzen von Tipps per Browser-Automation.
+"""Login bei Kicktipp und Setzen von Tipps per Browser-Automation.
 
 Hinweis: Kicktipp bietet keine offizielle API. Die Formularstruktur der
 Tippabgabe-Seite kann sich aendern -- falls das Setzen fehlschlaegt, zuerst
@@ -26,38 +26,123 @@ def _names_match(openliga_name: str, kicktipp_name: str) -> bool:
     return a in b or b in a
 
 
-def submit_tips(group: str, username: str, password: str, tips: list[dict]) -> list[str]:
-    """tips: Liste von {"home_team", "away_team", "home_goals", "away_goals"}.
+class KicktippSession:
+    """Haelt eine eingeloggte Browser-Session auf der Tippabgabe-Seite offen,
+    damit Lesen (bereits vorhandene Tipps) und Schreiben in einem Lauf
+    passieren koennen."""
 
-    Gibt eine Liste von Log-/Warnmeldungen zurueck (z.B. nicht gefundene Spiele).
+    def __init__(self, group: str, username: str, password: str):
+        self.group = group
+        self.username = username
+        self.password = password
+        self._pw = None
+        self._browser = None
+        self.page = None
+        self._rows = []
+
+    def __enter__(self) -> "KicktippSession":
+        self._pw = sync_playwright().start()
+        self._browser = self._pw.chromium.launch()
+        self.page = self._browser.new_page()
+
+        self.page.goto(LOGIN_URL)
+        self.page.fill('input[name="kennung"]', self.username)
+        self.page.fill('input[name="passwort"]', self.password)
+        self.page.click('button[type="submit"], input[type="submit"]')
+        self.page.wait_for_load_state("networkidle")
+
+        self.page.goto(f"https://www.kicktipp.de/{self.group}/tippabgabe")
+        self.page.wait_for_load_state("networkidle")
+
+        self._rows = self.page.query_selector_all(
+            "table.tippabgabe tr, form#tippabgabeForm tr"
+        )
+        if not self._rows:
+            self._rows = self.page.query_selector_all("tr")
+        return self
+
+    def __exit__(self, *exc):
+        if self._browser:
+            self._browser.close()
+        if self._pw:
+            self._pw.stop()
+
+    def find_row(self, home_team: str, away_team: str):
+        for row in self._rows:
+            text = row.inner_text()
+            if _names_match(home_team, text) and _names_match(away_team, text):
+                return row
+        return None
+
+    @staticmethod
+    def _tip_inputs(row):
+        return row.query_selector_all('input[type="text"], input[type="number"]')
+
+    def read_tip(self, row) -> tuple[str, str] | None:
+        """Liest vorhandene Werte; (None, None)-artig wird als leer interpretiert."""
+        inputs = self._tip_inputs(row)
+        if len(inputs) < 2:
+            return None
+        return inputs[0].input_value().strip(), inputs[1].input_value().strip()
+
+    def fill_tip(self, row, home_goals: int, away_goals: int) -> bool:
+        inputs = self._tip_inputs(row)
+        if len(inputs) < 2:
+            return False
+        inputs[0].fill(str(home_goals))
+        inputs[1].fill(str(away_goals))
+        return True
+
+    def submit_form(self) -> bool:
+        submit_btn = self.page.query_selector('button[type="submit"], input[type="submit"]')
+        if not submit_btn:
+            return False
+        submit_btn.click()
+        self.page.wait_for_load_state("networkidle")
+        return True
+
+
+def submit_tips(group: str, username: str, password: str, tips: list[dict]) -> list[str]:
+    """Setzt alle uebergebenen Tipps (ueberschreibt vorhandene Werte).
+    Fuer den manuellen UI-Flow, bei dem der Nutzer die Werte explizit bestaetigt hat.
     """
     messages: list[str] = []
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page()
-
-        page.goto(LOGIN_URL)
-        page.fill('input[name="kennung"]', username)
-        page.fill('input[name="passwort"]', password)
-        page.click('button[type="submit"], input[type="submit"]')
-        page.wait_for_load_state("networkidle")
-
-        page.goto(f"https://www.kicktipp.de/{group}/tippabgabe")
-        page.wait_for_load_state("networkidle")
-
-        rows = page.query_selector_all("table.tippabgabe tr, form#tippabgabeForm tr")
-        if not rows:
-            rows = page.query_selector_all("tr")
-
+    with KicktippSession(group, username, password) as session:
         for tip in tips:
-            row = None
-            for r in rows:
-                text = r.inner_text()
-                if _names_match(tip["home_team"], text) and _names_match(tip["away_team"], text):
-                    row = r
-                    break
+            row = session.find_row(tip["home_team"], tip["away_team"])
+            if row is None:
+                messages.append(
+                    f"Spiel nicht auf Tippabgabe-Seite gefunden: "
+                    f"{tip['home_team']} - {tip['away_team']}"
+                )
+                continue
+            if not session.fill_tip(row, tip["home_goals"], tip["away_goals"]):
+                messages.append(
+                    f"Keine Tipp-Eingabefelder gefunden fuer: "
+                    f"{tip['home_team']} - {tip['away_team']}"
+                )
+                continue
+            messages.append(
+                f"Tipp gesetzt: {tip['home_team']} {tip['home_goals']}:"
+                f"{tip['away_goals']} {tip['away_team']}"
+            )
 
+        if session.submit_form():
+            messages.append("Tipps abgeschickt.")
+        else:
+            messages.append("WARNUNG: Absenden-Button nicht gefunden, Tipps evtl. nicht gespeichert.")
+
+    return messages
+
+
+def submit_missing_tips(group: str, username: str, password: str, candidate_tips: list[dict]) -> list[str]:
+    """Backup-Modus: setzt nur Tipps fuer Spiele, die auf Kicktipp noch leer sind.
+    Bereits (z.B. manuell per UI) gesetzte Tipps werden nicht ueberschrieben."""
+    messages: list[str] = []
+    filled_any = False
+    with KicktippSession(group, username, password) as session:
+        for tip in candidate_tips:
+            row = session.find_row(tip["home_team"], tip["away_team"])
             if row is None:
                 messages.append(
                     f"Spiel nicht auf Tippabgabe-Seite gefunden: "
@@ -65,29 +150,34 @@ def submit_tips(group: str, username: str, password: str, tips: list[dict]) -> l
                 )
                 continue
 
-            inputs = row.query_selector_all('input[type="text"], input[type="number"]')
-            if len(inputs) < 2:
+            existing = session.read_tip(row)
+            if existing is None:
                 messages.append(
                     f"Keine Tipp-Eingabefelder gefunden fuer: "
                     f"{tip['home_team']} - {tip['away_team']}"
                 )
                 continue
 
-            inputs[0].fill(str(tip["home_goals"]))
-            inputs[1].fill(str(tip["away_goals"]))
-            messages.append(
-                f"Tipp gesetzt: {tip['home_team']} {tip['home_goals']}:"
-                f"{tip['away_goals']} {tip['away_team']}"
-            )
+            home_existing, away_existing = existing
+            if home_existing and away_existing:
+                messages.append(
+                    f"Bereits getippt, ueberspringe: {tip['home_team']} - {tip['away_team']}"
+                )
+                continue
 
-        submit_btn = page.query_selector('button[type="submit"], input[type="submit"]')
-        if submit_btn:
-            submit_btn.click()
-            page.wait_for_load_state("networkidle")
-            messages.append("Tipps abgeschickt.")
+            if session.fill_tip(row, tip["home_goals"], tip["away_goals"]):
+                filled_any = True
+                messages.append(
+                    f"Backup-Tipp gesetzt: {tip['home_team']} {tip['home_goals']}:"
+                    f"{tip['away_goals']} {tip['away_team']}"
+                )
+
+        if filled_any:
+            if session.submit_form():
+                messages.append("Backup-Tipps abgeschickt.")
+            else:
+                messages.append("WARNUNG: Absenden-Button nicht gefunden, Tipps evtl. nicht gespeichert.")
         else:
-            messages.append("WARNUNG: Absenden-Button nicht gefunden, Tipps evtl. nicht gespeichert.")
-
-        browser.close()
+            messages.append("Nichts zu tun: alle Spiele bereits getippt.")
 
     return messages
