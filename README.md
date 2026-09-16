@@ -1,20 +1,27 @@
 # kicktipp
 
-Automatischer Tippagent fuer Bundesliga (1. + 2.) Ergebnisse.
+Automatischer Tippagent fuer Bundesliga (1./2./3. Liga) Ergebnisse.
 
 ## Wie es funktioniert
 
-1. **Manuell (empfohlen):** Lokale Web-Oberflaeche starten, anstehende Spiele mit
-   Formanalyse und Tippvorschlag ansehen, bei Bedarf anpassen, per Knopfdruck
-   an Kicktipp senden.
-2. **Backup:** Ein GitHub-Actions-Job laeuft freitags kurz vor dem fruehesten
-   Anpfiff und traegt automatisch Tipps fuer alle Spiele ein, die bis dahin
-   noch nicht getippt wurden (z.B. weil der manuelle Schritt vergessen wurde).
-   Bereits gesetzte Tipps werden nicht ueberschrieben.
+Die Spieleliste kommt IMMER direkt von Kicktipps eigener Tippabgabe-Seite
+(nicht aus einer selbst erratenen OpenLigaDB-Auswahl) -- so werden garantiert
+genau die Spiele getippt, die diese Kicktipp-Gruppe tatsaechlich anbietet,
+egal aus welcher Liga.
 
-Datenquelle fuer Spielplaene/Ergebnisse: [OpenLigaDB](https://api.openligadb.de)
-(1. + 2. Bundesliga). Tippberechnung: Torform der letzten 5 Spiele je Team plus
+1. **Manuell (empfohlen):** Lokale Web-Oberflaeche starten, alle auf Kicktipp
+   offenen Spiele mit Formanalyse und Tippvorschlag ansehen, bei Bedarf
+   anpassen, per Knopfdruck an Kicktipp senden.
+2. **Backup:** Ein GitHub-Actions-Job laeuft freitags kurz vor dem fruehesten
+   Anpfiff, liest die auf Kicktipp noch offenen (nicht getippten) Spiele
+   direkt von der Seite und fuellt nur diese aus. Bereits gesetzte Tipps
+   werden nicht ueberschrieben.
+
+Datenquelle fuer Formwerte: [OpenLigaDB](https://api.openligadb.de)
+(1./2./3. Liga). Tippberechnung: Torform der letzten 5 Spiele je Team plus
 Heimvorteil-Faktor (`src/predictor.py`) — eine einfache Heuristik, kein ML-Modell.
+Der Abgleich zwischen OpenLigaDBs vollen Vereinsnamen und Kicktipps oft
+abgekuerzten Anzeigenamen laeuft ueber einen Token-Vergleich (`src/teamnames.py`).
 
 ## Setup
 

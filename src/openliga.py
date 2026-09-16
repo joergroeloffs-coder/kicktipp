@@ -1,4 +1,4 @@
-"""Zugriff auf die offene OpenLigaDB-API fuer Bundesliga (bl1) und 2. Bundesliga (bl2)."""
+"""Zugriff auf die offene OpenLigaDB-API fuer 1./2./3. Liga."""
 from __future__ import annotations
 
 import datetime as dt
@@ -10,6 +10,7 @@ API_BASE = "https://api.openligadb.de"
 LEAGUES = {
     "bl1": "1. Bundesliga",
     "bl2": "2. Bundesliga",
+    "bl3": "3. Liga",
 }
 
 
