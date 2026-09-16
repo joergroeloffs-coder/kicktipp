@@ -16,7 +16,7 @@ class TeamForm:
     goals_conceded_avg: float
 
 
-def _team_form(all_matches: list[Match], team: str, before, n: int = FORM_MATCHES) -> TeamForm:
+def team_form(all_matches: list[Match], team: str, before, n: int = FORM_MATCHES) -> TeamForm:
     played = [
         m
         for m in all_matches
@@ -46,8 +46,8 @@ def _team_form(all_matches: list[Match], team: str, before, n: int = FORM_MATCHE
 
 def predict_score(all_matches: list[Match], match: Match) -> tuple[int, int]:
     """Liefert einen (Heim, Gast)-Tipp basierend auf Torform der letzten Spiele."""
-    home_form = _team_form(all_matches, match.home_team, match.kickoff)
-    away_form = _team_form(all_matches, match.away_team, match.kickoff)
+    home_form = team_form(all_matches, match.home_team, match.kickoff)
+    away_form = team_form(all_matches, match.away_team, match.kickoff)
 
     home_expected = (home_form.goals_scored_avg + away_form.goals_conceded_avg) / 2 * HOME_ADVANTAGE
     away_expected = (away_form.goals_scored_avg + home_form.goals_conceded_avg) / 2 * AWAY_PENALTY

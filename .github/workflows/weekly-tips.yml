@@ -1,9 +1,10 @@
-name: Woechentliche Kicktipp-Tipps
+name: Kicktipp Backup-Tipps
 
 on:
   schedule:
-    # Freitags 13:00 UTC (~14-15 Uhr deutsche Zeit), deutlich vor Anpfiff.
-    - cron: "0 13 * * 5"
+    # Freitags 18:00 UTC (~19-20 Uhr deutsche Zeit), kurz vor dem fruehesten Anpfiff.
+    # Fuellt nur Spiele, die bis dahin nicht manuell (per lokaler UI) getippt wurden.
+    - cron: "0 18 * * 5"
   workflow_dispatch: {}
 
 jobs:
@@ -21,7 +22,7 @@ jobs:
           pip install -r requirements.txt
           playwright install --with-deps chromium
 
-      - name: Tipps berechnen und setzen
+      - name: Fehlende Tipps als Backup setzen
         env:
           KICKTIPP_GROUP: ${{ secrets.KICKTIPP_GROUP }}
           KICKTIPP_USERNAME: ${{ secrets.KICKTIPP_USERNAME }}

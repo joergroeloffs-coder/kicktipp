@@ -1,4 +1,5 @@
-"""Woechentlicher Tippagent: holt Fixtures, berechnet Tipps, setzt sie bei Kicktipp."""
+"""Backup-Lauf: fuellt nur Kicktipp-Tipps, die noch nicht (z.B. manuell per UI)
+gesetzt wurden. Gedacht als Sicherheitsnetz kurz vor Spielbeginn via GitHub Actions."""
 from __future__ import annotations
 
 import os
@@ -6,7 +7,7 @@ import sys
 
 from src.openliga import LEAGUES, get_season_matches, get_upcoming_friday_matches
 from src.predictor import predict_score
-from src.kicktipp_client import submit_tips
+from src.kicktipp_client import submit_missing_tips
 
 WITHIN_DAYS = int(os.environ.get("MATCH_WINDOW_DAYS", "4"))
 
@@ -47,7 +48,7 @@ def main() -> int:
         )
         print(f"Tipp berechnet: {match.home_team} {home_goals}:{away_goals} {match.away_team}")
 
-    messages = submit_tips(group, username, password, tips)
+    messages = submit_missing_tips(group, username, password, tips)
     for msg in messages:
         print(msg)
 
