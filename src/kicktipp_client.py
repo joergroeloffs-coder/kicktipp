@@ -26,6 +26,45 @@ def _names_match(openliga_name: str, kicktipp_name: str) -> bool:
     return a in b or b in a
 
 
+_COOKIE_BUTTON_TEXTS = [
+    "Alle akzeptieren",
+    "Akzeptieren",
+    "Einverstanden",
+    "Zustimmen",
+    "Accept all",
+    "Accept",
+]
+
+
+def _dismiss_cookie_banner(page) -> None:
+    """Best-effort: schliesst Cookie-/Consent-Banner, falls vorhanden.
+    Solche Overlays verschieben sonst das Layout und lassen Formularfelder
+    ausserhalb des sichtbaren Viewports landen."""
+    for text in _COOKIE_BUTTON_TEXTS:
+        try:
+            button = page.get_by_role("button", name=text, exact=False)
+            button.click(timeout=2000)
+            return
+        except Exception:
+            continue
+
+
+def _click(page, selector: str) -> bool:
+    """Robuster Klick: erst in den sichtbaren Bereich scrollen, dann klicken;
+    falls das (z.B. wegen eines Overlays) haengen bleibt, erzwungen klicken."""
+    locator = page.locator(selector).first
+    try:
+        locator.scroll_into_view_if_needed(timeout=5000)
+        locator.click(timeout=10000)
+        return True
+    except Exception:
+        try:
+            locator.click(timeout=5000, force=True)
+            return True
+        except Exception:
+            return False
+
+
 class KicktippSession:
     """Haelt eine eingeloggte Browser-Session auf der Tippabgabe-Seite offen,
     damit Lesen (bereits vorhandene Tipps) und Schreiben in einem Lauf
@@ -43,15 +82,18 @@ class KicktippSession:
     def __enter__(self) -> "KicktippSession":
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch()
-        self.page = self._browser.new_page()
+        self.page = self._browser.new_page(viewport={"width": 1366, "height": 2200})
 
         self.page.goto(LOGIN_URL)
+        _dismiss_cookie_banner(self.page)
         self.page.fill('input[name="kennung"]', self.username)
         self.page.fill('input[name="passwort"]', self.password)
-        self.page.click('button[type="submit"], input[type="submit"]')
+        if not _click(self.page, 'button[type="submit"], input[type="submit"]'):
+            raise RuntimeError("Login-Button konnte nicht geklickt werden.")
         self.page.wait_for_load_state("networkidle")
 
         self.page.goto(f"https://www.kicktipp.de/{self.group}/tippabgabe")
+        _dismiss_cookie_banner(self.page)
         self.page.wait_for_load_state("networkidle")
 
         self._rows = self.page.query_selector_all(
@@ -94,10 +136,8 @@ class KicktippSession:
         return True
 
     def submit_form(self) -> bool:
-        submit_btn = self.page.query_selector('button[type="submit"], input[type="submit"]')
-        if not submit_btn:
+        if not _click(self.page, 'button[type="submit"], input[type="submit"]'):
             return False
-        submit_btn.click()
         self.page.wait_for_load_state("networkidle")
         return True
 
