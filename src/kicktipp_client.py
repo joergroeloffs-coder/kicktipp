@@ -185,20 +185,34 @@ class KicktippSession:
         inputs[1].fill(str(away_goals))
         return True
 
-    def submit_form(self) -> bool:
-        # Zuerst gezielt den Submit-Button INNERHALB des Tippformulars
-        # suchen -- ein ungerichteter Seiten-weiter Selector kann sonst
-        # versehentlich einen anderen Button (Header/Werbung) treffen.
+    def submit_form(self) -> tuple[bool, str]:
+        """Klickt den Speichern-Button und beobachtet dabei die tatsaechliche
+        Netzwerkantwort, um zweifelsfrei zu sehen, ob (und wie) der Server
+        auf den Klick reagiert hat."""
         specific = (
             'form#tippabgabeForm button[type="submit"], '
             'form#tippabgabeForm input[type="submit"], '
             'table.tippabgabe button[type="submit"]'
         )
-        if not _click(self.page, specific):
-            if not _click(self.page, 'button[type="submit"], input[type="submit"]'):
-                return False
+
+        def do_click() -> bool:
+            if _click(self.page, specific):
+                return True
+            return _click(self.page, 'button[type="submit"], input[type="submit"]')
+
+        try:
+            with self.page.expect_response(
+                lambda r: r.request.method == "POST", timeout=8000
+            ) as resp_info:
+                if not do_click():
+                    return False, "Submit-Button konnte nicht geklickt werden."
+            resp = resp_info.value
+            info = f"POST {resp.url} -> Status {resp.status}"
+        except Exception as exc:
+            info = f"Kein POST nach dem Klick beobachtet (evtl. AJAX ohne Navigation): {exc}"
+
         self.page.wait_for_load_state("networkidle")
-        return True
+        return True, info
 
     def debug_buttons(self, limit: int = 25) -> list[str]:
         """Liefert alle Button-/Submit-artigen Elemente auf der Seite --
@@ -264,11 +278,12 @@ def submit_tips(group: str, username: str, password: str, tips: list[dict]) -> l
                 f"{tip['away_goals']} {tip['away_team']}"
             )
 
-        if session.submit_form():
-            messages.append("Tipps abgeschickt.")
+        ok, info = session.submit_form()
+        if ok:
+            messages.append(f"Tipps abgeschickt. ({info})")
             messages.extend(session.verify_saved(filled_tips))
         else:
-            messages.append("WARNUNG: Absenden-Button nicht gefunden, Tipps evtl. nicht gespeichert.")
+            messages.append(f"WARNUNG: Absenden-Button nicht gefunden, Tipps evtl. nicht gespeichert. ({info})")
 
     return messages
 
@@ -311,15 +326,16 @@ def submit_missing_tips(group: str, username: str, password: str, candidate_tips
                 )
 
         if filled_tips:
-            if session.submit_form():
-                messages.append("Backup-Tipps abgeschickt.")
+            ok, info = session.submit_form()
+            if ok:
+                messages.append(f"Backup-Tipps abgeschickt. ({info})")
                 problems = session.verify_saved(filled_tips)
                 messages.extend(problems)
                 if problems:
                     messages.append("DEBUG Button-/Submit-Elemente auf der Seite:")
                     messages.extend(f"  DEBUG-BTN: {b}" for b in session.debug_buttons())
             else:
-                messages.append("WARNUNG: Absenden-Button nicht gefunden, Tipps evtl. nicht gespeichert.")
+                messages.append(f"WARNUNG: Absenden-Button nicht gefunden, Tipps evtl. nicht gespeichert. ({info})")
         else:
             messages.append("Nichts zu tun: alle Spiele bereits getippt.")
 
