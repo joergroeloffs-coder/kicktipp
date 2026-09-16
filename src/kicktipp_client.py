@@ -126,6 +126,17 @@ class KicktippSession:
                 texts.append(text)
         return texts
 
+    def debug_row_html(self, limit: int = 3) -> list[str]:
+        """Liefert das rohe HTML der ersten Zeilen mit Tipp-Eingabefeldern --
+        nur zur Fehlersuche der genauen Tabellenstruktur."""
+        html_rows = []
+        for row in self._rows:
+            if len(self._tip_inputs(row)) >= 2:
+                html_rows.append(row.inner_html()[:2000])
+            if len(html_rows) >= limit:
+                break
+        return html_rows
+
     @staticmethod
     def _tip_inputs(row):
         return row.query_selector_all('input[type="text"], input[type="number"]')
@@ -202,6 +213,9 @@ def submit_missing_tips(group: str, username: str, password: str, candidate_tips
                 if not debug_dumped:
                     messages.append("DEBUG Zeileninhalte auf der Tippabgabe-Seite:")
                     messages.extend(f"  DEBUG: {t}" for t in session.debug_row_texts())
+                    messages.append("DEBUG HTML der ersten Tipp-Zeilen:")
+                    for html in session.debug_row_html():
+                        messages.append(f"  DEBUG-HTML: {html}")
                     debug_dumped = True
                 continue
 
