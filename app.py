@@ -12,7 +12,7 @@ import os
 from flask import Flask, jsonify, request
 from dotenv import load_dotenv
 
-from src.openliga import LEAGUES, get_season_matches
+from src.openliga import LEAGUES, get_season_matches, get_table
 from src.predictor import team_form, predict_score
 from src.kicktipp_client import KicktippSession, submit_tips
 
@@ -41,6 +41,7 @@ def api_matches():
         return jsonify({"error": "KICKTIPP_GROUP/USERNAME/PASSWORD nicht gesetzt (.env pruefen)."}), 400
 
     all_matches = [m for league in LEAGUES for m in get_season_matches(league)]
+    table = [entry for league in LEAGUES for entry in get_table(league)]
 
     with KicktippSession(group, username, password) as session:
         kicktipp_matches = session.list_all_matches()
@@ -48,12 +49,14 @@ def api_matches():
     now = dt.datetime.now(dt.timezone.utc)
     result = []
     for m in kicktipp_matches:
-        home_form = team_form(all_matches, m["home_team"], now)
-        away_form = team_form(all_matches, m["away_team"], now)
+        home_form = team_form(all_matches, m["home_team"], now, venue="home")
+        away_form = team_form(all_matches, m["away_team"], now, venue="away")
         if m["existing_home_goals"] is not None:
             home_goals, away_goals = int(m["existing_home_goals"]), int(m["existing_away_goals"])
         else:
-            home_goals, away_goals = predict_score(all_matches, m["home_team"], m["away_team"])
+            home_goals, away_goals = predict_score(
+                all_matches, m["home_team"], m["away_team"], table=table, odds=m["odds"]
+            )
         result.append(
             {
                 "home_team": m["home_team"],

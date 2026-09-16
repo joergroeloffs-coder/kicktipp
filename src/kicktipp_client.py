@@ -130,8 +130,26 @@ class KicktippSession:
                         "element": tr,
                         "home_text": home_cell.inner_text().strip(),
                         "away_text": away_cell.inner_text().strip(),
+                        "odds": self._read_odds(tr),
                     }
                 )
+
+    @staticmethod
+    def _read_odds(tr) -> dict | None:
+        """Liest die von Kicktipp mitgelieferten Buchmacher-Quoten (Sieg
+        Heim/Remis/Sieg Gast) aus der Quoten-Spalte -- ein starkes, bereits
+        vorhandenes Signal, das bisher ungenutzt blieb."""
+        quote_cell = tr.query_selector("td.quoten") or tr.query_selector("td.col4")
+        if not quote_cell:
+            return None
+        texts = quote_cell.query_selector_all(".quote-text")
+        if len(texts) != 3:
+            return None
+        try:
+            home, draw, away = (float(t.inner_text().strip().replace(",", ".")) for t in texts)
+        except ValueError:
+            return None
+        return {"home": home, "draw": draw, "away": away}
 
     def reload_rows(self) -> None:
         """Laedt die Tippabgabe-Seite neu und baut self._rows neu auf --
@@ -169,7 +187,11 @@ class KicktippSession:
             if home_existing and away_existing:
                 continue
             open_matches.append(
-                {"home_team": row["home_text"], "away_team": row["away_text"]}
+                {
+                    "home_team": row["home_text"],
+                    "away_team": row["away_text"],
+                    "odds": row["odds"],
+                }
             )
         return open_matches
 
@@ -197,6 +219,7 @@ class KicktippSession:
                     "away_team": row["away_text"],
                     "existing_home_goals": home_existing or None,
                     "existing_away_goals": away_existing or None,
+                    "odds": row["odds"],
                 }
             )
         return result
@@ -360,8 +383,9 @@ def submit_missing_tips(
     """Backup-Modus: liest die auf Kicktipp tatsaechlich offenen (noch nicht
     getippten) Spiele direkt von der Seite -- statt eine eigene Kandidaten-
     liste zu erraten und zu versuchen, sie auf Kicktipp wiederzufinden.
-    predict_fn(home_team, away_team) -> (home_goals, away_goals) berechnet
-    den Tipp je Spiel anhand der von Kicktipp gemeldeten Vereinsnamen.
+    predict_fn(home_team, away_team, odds) -> (home_goals, away_goals) berechnet
+    den Tipp je Spiel anhand der von Kicktipp gemeldeten Vereinsnamen und
+    Quoten (odds ist ein dict {"home","draw","away"} oder None).
     screenshot_dir: wenn gesetzt, werden Screenshots vor/nach dem Absenden
     dorthin gespeichert -- nur zur visuellen Fehlersuche."""
     messages: list[str] = []
@@ -378,7 +402,7 @@ def submit_missing_tips(
                 messages.append(f"Zeile nicht mehr gefunden: {home_team} - {away_team}")
                 continue
 
-            home_goals, away_goals = predict_fn(home_team, away_team)
+            home_goals, away_goals = predict_fn(home_team, away_team, match["odds"])
             tip = {
                 "home_team": home_team,
                 "away_team": away_team,
