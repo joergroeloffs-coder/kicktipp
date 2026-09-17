@@ -7,7 +7,12 @@ on:
     # (Form, Tabelle, Quoten) seit dem letzten Lauf geaendert hat. Spiele
     # nach Anpfiff sind von Kicktipp gesperrt und werden nie angefasst.
     - cron: "0 6 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      explain_match:
+        description: 'Optional: "Heimteam,Gastteam" -- zeigt nur die Rechenschritte fuer dieses Spiel, ohne Tipps zu setzen.'
+        required: false
+        default: ""
 
 jobs:
   set-tips:
@@ -25,6 +30,7 @@ jobs:
           playwright install --with-deps chromium
 
       - name: Tipps neu berechnen und abgleichen
+        if: ${{ github.event.inputs.explain_match == '' }}
         env:
           KICKTIPP_GROUP: ${{ secrets.KICKTIPP_GROUP }}
           KICKTIPP_USERNAME: ${{ secrets.KICKTIPP_USERNAME }}
@@ -33,6 +39,18 @@ jobs:
           PYTHONUNBUFFERED: "1"
         timeout-minutes: 8
         run: python main.py
+
+      - name: Tipp-Berechnung fuer ein Spiel erklaeren
+        if: ${{ github.event.inputs.explain_match != '' }}
+        env:
+          KICKTIPP_GROUP: ${{ secrets.KICKTIPP_GROUP }}
+          KICKTIPP_USERNAME: ${{ secrets.KICKTIPP_USERNAME }}
+          KICKTIPP_PASSWORD: ${{ secrets.KICKTIPP_PASSWORD }}
+          PYTHONUNBUFFERED: "1"
+        timeout-minutes: 5
+        run: |
+          IFS=',' read -r HOME AWAY <<< "${{ github.event.inputs.explain_match }}"
+          python explain_tip.py "$HOME" "$AWAY"
 
       - name: Screenshots als Artifact hochladen
         if: always()

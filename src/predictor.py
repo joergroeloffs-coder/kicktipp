@@ -132,6 +132,73 @@ def _odds_expected_diff(odds: dict) -> float | None:
     return (p_home - p_away) * 2.5
 
 
+def predict_score_explained(
+    all_matches: list[Match],
+    home_team: str,
+    away_team: str,
+    before: dt.datetime | None = None,
+    table: list[TableEntry] | None = None,
+    odds: dict | None = None,
+) -> dict:
+    """Wie predict_score, aber liefert zusaetzlich alle Zwischenwerte --
+    damit sich ein konkreter Tipp nachvollziehen laesst, statt nur das
+    Endergebnis zu sehen."""
+    before = before or dt.datetime.now(dt.timezone.utc)
+
+    home_form = team_form(all_matches, home_team, before, venue="home")
+    away_form = team_form(all_matches, away_team, before, venue="away")
+
+    home_expected = (home_form.goals_scored_avg + away_form.goals_conceded_avg) / 2 * HOME_ADVANTAGE
+    away_expected = (away_form.goals_scored_avg + home_form.goals_conceded_avg) / 2 * AWAY_PENALTY
+    total_expected = home_expected + away_expected
+    diff_after_form = home_expected - away_expected
+    diff = diff_after_form
+
+    home_strength = away_strength = None
+    diff_after_table = diff
+    if table:
+        home_strength = table_strength(table, home_team)
+        away_strength = table_strength(table, away_team)
+        if home_strength is not None and away_strength is not None:
+            diff += TABLE_WEIGHT * (home_strength - away_strength)
+    diff_after_table = diff
+
+    h2h = head_to_head_diff(all_matches, home_team, away_team, before)
+    if h2h is not None:
+        diff = diff + H2H_WEIGHT * (h2h - diff) / (1 + H2H_WEIGHT)
+    diff_after_h2h = diff
+
+    odds_diff = None
+    if odds:
+        odds_diff = _odds_expected_diff(odds)
+        if odds_diff is not None:
+            diff = (1 - ODDS_WEIGHT) * diff + ODDS_WEIGHT * odds_diff
+
+    home_goals = max(0, round((total_expected + diff) / 2))
+    away_goals = max(0, round((total_expected - diff) / 2))
+
+    return {
+        "home_team": home_team,
+        "away_team": away_team,
+        "home_form": home_form,
+        "away_form": away_form,
+        "home_expected_goals_from_form": round(home_expected, 3),
+        "away_expected_goals_from_form": round(away_expected, 3),
+        "total_expected_goals": round(total_expected, 3),
+        "diff_after_form": round(diff_after_form, 3),
+        "home_table_strength": round(home_strength, 3) if home_strength is not None else None,
+        "away_table_strength": round(away_strength, 3) if away_strength is not None else None,
+        "diff_after_table": round(diff_after_table, 3),
+        "head_to_head_diff": round(h2h, 3) if h2h is not None else None,
+        "diff_after_h2h": round(diff_after_h2h, 3),
+        "odds": odds,
+        "odds_implied_diff": round(odds_diff, 3) if odds_diff is not None else None,
+        "final_diff": round(diff, 3),
+        "home_goals": home_goals,
+        "away_goals": away_goals,
+    }
+
+
 def predict_score(
     all_matches: list[Match],
     home_team: str,
@@ -145,31 +212,5 @@ def predict_score(
     home_team/away_team koennen auch Kicktipps eigene (abgekuerzte)
     Anzeigenamen sein -- der Abgleich mit OpenLigaDB laeuft ueber
     Tokenvergleich, nicht exakte Gleichheit."""
-    before = before or dt.datetime.now(dt.timezone.utc)
-
-    home_form = team_form(all_matches, home_team, before, venue="home")
-    away_form = team_form(all_matches, away_team, before, venue="away")
-
-    home_expected = (home_form.goals_scored_avg + away_form.goals_conceded_avg) / 2 * HOME_ADVANTAGE
-    away_expected = (away_form.goals_scored_avg + home_form.goals_conceded_avg) / 2 * AWAY_PENALTY
-    total_expected = home_expected + away_expected
-    diff = home_expected - away_expected
-
-    if table:
-        home_strength = table_strength(table, home_team)
-        away_strength = table_strength(table, away_team)
-        if home_strength is not None and away_strength is not None:
-            diff += TABLE_WEIGHT * (home_strength - away_strength)
-
-    h2h = head_to_head_diff(all_matches, home_team, away_team, before)
-    if h2h is not None:
-        diff = diff + H2H_WEIGHT * (h2h - diff) / (1 + H2H_WEIGHT)
-
-    if odds:
-        odds_diff = _odds_expected_diff(odds)
-        if odds_diff is not None:
-            diff = (1 - ODDS_WEIGHT) * diff + ODDS_WEIGHT * odds_diff
-
-    home_goals = max(0, round((total_expected + diff) / 2))
-    away_goals = max(0, round((total_expected - diff) / 2))
-    return home_goals, away_goals
+    result = predict_score_explained(all_matches, home_team, away_team, before, table, odds)
+    return result["home_goals"], result["away_goals"]
