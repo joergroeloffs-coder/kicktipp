@@ -49,8 +49,8 @@ jobs:
           PYTHONUNBUFFERED: "1"
         timeout-minutes: 5
         run: |
-          IFS=',' read -r HOME AWAY <<< "${{ github.event.inputs.explain_match }}"
-          python explain_tip.py "$HOME" "$AWAY"
+          IFS=',' read -r MATCH_HOME MATCH_AWAY <<< "${{ github.event.inputs.explain_match }}"
+          python explain_tip.py "$MATCH_HOME" "$MATCH_AWAY"
 
       - name: Screenshots als Artifact hochladen
         if: always()
