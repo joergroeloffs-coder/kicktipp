@@ -1,7 +1,8 @@
 """Tipp-Heuristik, die mehrere Signale kombiniert:
 
 1. Torform der letzten Spiele je Team, getrennt nach Heim-/Auswaertsspielen
-   (ein Team performt oft deutlich unterschiedlich zuhause vs. auswaerts).
+   und nach Aktualitaet gewichtet (das juengste Spiel zaehlt mehr als das
+   sechstletzte).
 2. Aktuelle Ligatabelle (Punkte/Tordifferenz pro Spiel) als Mass fuer die
    generelle Saisonstaerke, unabhaengig von kurzfristiger Form.
 3. Direkter Vergleich (letzte Duelle zwischen genau diesen beiden Teams).
@@ -9,11 +10,21 @@
    anzeigt -- die von Wettanbietern implizierten Siegwahrscheinlichkeiten
    sind ein sehr starkes, bereits vorhandenes Signal.
 
-Kein ML-Modell, aber deutlich mehr als eine reine 5-Spiele-Torschnitt-Regel.
+Die kombinierten Signale ergeben zwei erwartete Torzahlen (Poisson-Lambdas).
+Das wahrscheinlichste Endergebnis wird ueber eine Poisson-Verteilung
+bestimmt (siehe most_likely_scoreline) statt jede Torzahl einzeln zu
+runden -- unabhaengiges Runden zieht statistisch zu oft ins Unentschieden,
+weil es die gemeinsame Wahrscheinlichkeit der Kombination ignoriert.
+
+Kein ML-Modell und keine zusaetzlichen Datenquellen (Verletzungen,
+Aufstellungen, xG-Statistiken sind ohne kostenpflichtige APIs nicht
+verfuegbar) -- aber eine statistisch korrektere Auswertung der ohnehin
+vorhandenen Daten.
 """
 from __future__ import annotations
 
 import datetime as dt
+import math
 from dataclasses import dataclass
 
 from src.openliga import Match, TableEntry
@@ -23,6 +34,7 @@ HOME_ADVANTAGE = 1.15
 AWAY_PENALTY = 0.92
 FORM_MATCHES = 6
 H2H_MATCHES = 5
+MAX_GOALS_CONSIDERED = 6
 
 # Gewichte, mit denen die einzelnen Signale den Basiswert (reine Torform)
 # verschieben. Odds bekommen das groesste Gewicht, da sie Marktwissen
@@ -52,8 +64,10 @@ def _matches_for_team(all_matches: list[Match], team: str, before: dt.datetime) 
 def team_form(
     all_matches: list[Match], team: str, before: dt.datetime, venue: str | None = None, n: int = FORM_MATCHES
 ) -> TeamForm:
-    """Torform der letzten `n` Spiele. venue="home"/"away" beschraenkt auf
-    Heim- bzw. Auswaertsspiele; None nimmt beide Seiten."""
+    """Torform der letzten `n` Spiele, nach Aktualitaet gewichtet (das
+    juengste Spiel zaehlt doppelt so viel wie das aelteste im Fenster).
+    venue="home"/"away" beschraenkt auf Heim- bzw. Auswaertsspiele; None
+    nimmt beide Seiten."""
     played = _matches_for_team(all_matches, team, before)
     if venue == "home":
         played = [m for m in played if names_match(team, m.home_team)]
@@ -65,18 +79,46 @@ def team_form(
     if not recent:
         return TeamForm(goals_scored_avg=1.3, goals_conceded_avg=1.3)
 
-    scored, conceded = [], []
-    for m in recent:
+    # Linear von 1.0 (juengstes Spiel) auf 0.5 (aeltestes im Fenster)
+    # abfallende Gewichte -- juengere Ergebnisse sagen mehr ueber die
+    # aktuelle Staerke aus als welche von vor Wochen.
+    count = len(recent)
+    weights = [1.0 - 0.5 * (i / max(count - 1, 1)) for i in range(count)]
+
+    weighted_scored = weighted_conceded = 0.0
+    for m, w in zip(recent, weights):
         if names_match(team, m.home_team):
-            scored.append(m.home_goals or 0)
-            conceded.append(m.away_goals or 0)
+            weighted_scored += (m.home_goals or 0) * w
+            weighted_conceded += (m.away_goals or 0) * w
         else:
-            scored.append(m.away_goals or 0)
-            conceded.append(m.home_goals or 0)
+            weighted_scored += (m.away_goals or 0) * w
+            weighted_conceded += (m.home_goals or 0) * w
+    weight_sum = sum(weights)
     return TeamForm(
-        goals_scored_avg=sum(scored) / len(scored),
-        goals_conceded_avg=sum(conceded) / len(conceded),
+        goals_scored_avg=weighted_scored / weight_sum,
+        goals_conceded_avg=weighted_conceded / weight_sum,
     )
+
+
+def _poisson_pmf(k: int, lam: float) -> float:
+    return math.exp(-lam) * lam**k / math.factorial(k)
+
+
+def most_likely_scoreline(lam_home: float, lam_away: float, max_goals: int = MAX_GOALS_CONSIDERED) -> tuple[int, int]:
+    """Waehlt die Torkombination mit der hoechsten gemeinsamen
+    Wahrscheinlichkeit unter einer Poisson-Verteilung mit den gegebenen
+    Erwartungswerten, statt jede Seite unabhaengig zu runden.
+    Unabhaengiges Runden zieht statistisch zu oft ins Unentschieden: z.B.
+    runden 2.35 und 1.79 beide auf/ab zu 2:2, obwohl 2:1 (die getrennten
+    Poisson-Modi 2 und 1) tatsaechlich wahrscheinlicher ist."""
+    lam_home = max(lam_home, 0.05)
+    lam_away = max(lam_away, 0.05)
+    # Da Heim- und Gasttore hier als unabhaengig modelliert werden, zerfaellt
+    # die gemeinsame Wahrscheinlichkeit in ein Produkt -- das Maximum liegt
+    # daher exakt beim Paar der beiden einzelnen Poisson-Modi.
+    best_home = max(range(max_goals + 1), key=lambda k: _poisson_pmf(k, lam_home))
+    best_away = max(range(max_goals + 1), key=lambda k: _poisson_pmf(k, lam_away))
+    return best_home, best_away
 
 
 def head_to_head_diff(
@@ -174,8 +216,9 @@ def predict_score_explained(
         if odds_diff is not None:
             diff = (1 - ODDS_WEIGHT) * diff + ODDS_WEIGHT * odds_diff
 
-    home_goals = max(0, round((total_expected + diff) / 2))
-    away_goals = max(0, round((total_expected - diff) / 2))
+    lam_home = max(0.05, (total_expected + diff) / 2)
+    lam_away = max(0.05, (total_expected - diff) / 2)
+    home_goals, away_goals = most_likely_scoreline(lam_home, lam_away)
 
     return {
         "home_team": home_team,
@@ -194,6 +237,8 @@ def predict_score_explained(
         "odds": odds,
         "odds_implied_diff": round(odds_diff, 3) if odds_diff is not None else None,
         "final_diff": round(diff, 3),
+        "lambda_home": round(lam_home, 3),
+        "lambda_away": round(lam_away, 3),
         "home_goals": home_goals,
         "away_goals": away_goals,
     }
